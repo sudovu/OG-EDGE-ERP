@@ -10,6 +10,9 @@ import SalesPage from "./pages/SalesPage";
 import InventoryPage from "./pages/InventoryPage";
 import ServicesPage from "./pages/ServicesPage";
 import SettingsPage from "./pages/SettingsPage";
+import WorkflowsPage from "./pages/WorkflowsPage";
+import AccountingPage from "./pages/AccountingPage";
+import IntegrationsPage from "./pages/IntegrationsPage";
 
 function useIsAuthed() {
   return !!localStorage.getItem("token");
@@ -24,6 +27,9 @@ function Layout({ children }: { children: React.ReactNode }) {
     { to: "/sales", label: "Sales" },
     { to: "/inventory", label: "Inventory" },
     { to: "/services", label: "Services" },
+    { to: "/workflows", label: "Workflows" },
+    { to: "/accounting", label: "Accounting" },
+    { to: "/integrations", label: "Integrations" },
     { to: "/settings", label: "Settings" },
   ];
   return (
@@ -80,6 +86,9 @@ export default function App() {
       <Route path="/sales" element={<Guard><SalesPage /></Guard>} />
       <Route path="/inventory" element={<Guard><InventoryPage /></Guard>} />
       <Route path="/services" element={<Guard><ServicesPage /></Guard>} />
+      <Route path="/workflows" element={<Guard><WorkflowsPage /></Guard>} />
+      <Route path="/accounting" element={<Guard><AccountingPage /></Guard>} />
+      <Route path="/integrations" element={<Guard><IntegrationsPage /></Guard>} />
       <Route path="/settings" element={<Guard><SettingsPage /></Guard>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -30,6 +30,15 @@ export default function ServicesPage() {
     }
   };
 
+  const bill = async (id: string) => {
+    try {
+      await api.post(`/service-requests/${id}/bill`);
+      load();
+    } catch (err: any) {
+      setError(err?.response?.data?.error?.message ?? "Bill failed");
+    }
+  };
+
   const advance = async (id: string, status: string) => {
     try {
       await api.patch(`/service-requests/${id}`, { status });
@@ -82,6 +91,7 @@ export default function ServicesPage() {
                   <select className="border p-1 rounded" value={r.status} onChange={(e) => advance(r.id, e.target.value)}>
                     {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>
+                  <button onClick={() => bill(r.id)} className="ml-2 text-blue-600 text-xs">Bill</button>
                 </td>
               </tr>
             ))}

@@ -164,3 +164,58 @@ servicesRouter.patch("/work-orders/:id", authenticate, resolveTenant, requireOrg
   }
 });
 
+
+// Bill a completed service request: generate invoice from work order lines
+servicesRouter.post("/service-requests/:id/bill", authenticate, resolveTenant, requireOrg, requirePermission("service.manage"), (req, res, next) => {
+  try {
+    const r = req as any;
+    const db = getDb();
+    const sr = db.prepare("SELECT * FROM service_requests WHERE id = ?").get(req.params.id) as any;
+    if (!sr || sr.organization_id !== r.organizationId) throw new Error("Service request not found");
+    const workOrders = db.prepare("SELECT id FROM work_orders WHERE service_request_id = ?").all(req.params.id) as { id: string }[];
+    const lines: any[] = [];
+    for (const wo of workOrders) {
+      const wlines = db.prepare("SELECT * FROM work_order_lines WHERE work_order_id = ?").all(wo.id) as any[];
+      for (const wl of wlines) {
+        lines.push({
+          product_id: wl.product_id,
+          description: wl.description,
+          quantity: wl.quantity,
+          unit_price: wl.unit_cost,
+          tax_rate: 0,
+        });
+      }
+    }
+    if (lines.length === 0) {
+      // fallback: use estimated/actual cost as single labor line
+      lines.push({
+        description: sr.title,
+        quantity: 1,
+        unit_price: sr.actual_cost || sr.estimated_cost || 0,
+        tax_rate: 0,
+      });
+    }
+    const totals = lines.reduce((acc, l) => {
+      const sub = l.quantity * l.unit_price;
+      acc.subtotal += sub;
+      acc.total += sub;
+      return acc;
+    }, { subtotal: 0, discount_total: 0, tax_total: 0, total: 0 });
+    const number = nextNumber(r.organizationId, "invoice", "INV-");
+    const id = newId();
+    const tx = db.transaction(() => {
+      db.prepare(
+        `INSERT INTO invoices (id, organization_id, branch_id, customer_id, number, status, currency, subtotal, discount_total, tax_total, total, amount_due, notes, created_by)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).run(id, r.organizationId, sr.branch_id, sr.customer_id, number, "issued", sr.currency, totals.subtotal, 0, 0, totals.total, totals.total, `Service request ${sr.number}`, r.user.id);
+      const stmt = db.prepare("INSERT INTO invoice_lines (id, invoice_id, product_id, description, quantity, unit_price, discount, tax_rate, line_total, sort_order) VALUES (?,?,?,?,?,?,?,?,?,?)");
+      lines.forEach((l, i) => stmt.run(newId(), id, l.product_id ?? null, l.description, l.quantity, l.unit_price, 0, l.tax_rate ?? 0, l.quantity * l.unit_price, i));
+      db.prepare("UPDATE invoices SET issued_at = datetime('now') WHERE id = ?").run(id);
+      db.prepare("UPDATE service_requests SET billing_status = 'billed', invoice_id = ?, updated_at = datetime('now') WHERE id = ?").run(id, req.params.id);
+    });
+    tx();
+    ok(res, { id, number }, 201);
+  } catch (e) {
+    next(e);
+  }
+});

@@ -5,6 +5,7 @@ import { requirePermission } from "../../core/rbac/middleware";
 import { getDb } from "../../db/database";
 import { newId } from "../../shared/ids";
 import { ok } from "../../shared/response";
+import { getAllowedTransitions, transitionEntity } from "./workflow.engine";
 
 export const workflowsRouter = Router();
 
@@ -70,3 +71,39 @@ workflowsRouter.post("/workflows/:id/transitions", authenticate, resolveTenant, 
   }
 });
 
+
+// Allowed transitions for an entity's current state
+workflowsRouter.get("/workflows/transitions", authenticate, resolveTenant, requireOrg, (req, res, next) => {
+  try {
+    const entityType = String(req.query.entityType);
+    const currentState = String(req.query.state);
+    const orgId = (req as any).organizationId;
+    const transitions = getAllowedTransitions(orgId, entityType, currentState);
+    ok(res, transitions);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Execute a transition
+workflowsRouter.post("/workflows/transition", authenticate, resolveTenant, requireOrg, (req, res, next) => {
+  try {
+    const schema = z.object({
+      entityType: z.string(),
+      entityId: z.string(),
+      toState: z.string(),
+    });
+    const input = schema.parse(req.body);
+    const r = req as any;
+    const result = transitionEntity({
+      orgId: r.organizationId,
+      entityType: input.entityType,
+      entityId: input.entityId,
+      toState: input.toState,
+      userId: r.user.id,
+    });
+    ok(res, result);
+  } catch (e) {
+    next(e);
+  }
+});

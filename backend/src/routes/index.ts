@@ -12,6 +12,7 @@ import { servicesRouter } from "../modules/services/services.routes";
 import { accountingRouter } from "../modules/accounting/accounting.routes";
 import { workflowsRouter } from "../modules/workflows/workflows.routes";
 import { reportsRouter } from "../modules/reports/reports.routes";
+import { integrationsRouter } from "../modules/integrations/integrations.routes";
 
 const router = Router();
 
@@ -28,6 +29,7 @@ router.use(servicesRouter);
 router.use(accountingRouter);
 router.use(workflowsRouter);
 router.use(reportsRouter);
+router.use(integrationsRouter);
 
 export const apiRouter = router;
 
