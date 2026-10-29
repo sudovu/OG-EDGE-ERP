@@ -357,3 +357,55 @@ accountingRouter.get("/reports/ledger", authenticate, resolveTenant, requireOrg,
   }));
   ok(res, result);
 });
+
+// Balance sheet (Nepal NAS reporting): assets = liabilities + equity
+accountingRouter.get("/reports/balance-sheet", authenticate, resolveTenant, requireOrg, (req, res) => {
+  const r = req as any;
+  const db = getDb();
+  const groups = db.prepare(
+    `SELECT a.account_type, COALESCE(SUM(jl.debit - jl.credit), 0) as net_amount
+     FROM accounts a
+     LEFT JOIN journal_lines jl ON jl.account_id = a.id
+     LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id
+     WHERE a.organization_id = ? AND (je.is_posted = 1 OR je.id IS NULL)
+     GROUP BY a.account_type`,
+  ).all(r.organizationId) as any[];
+  const totals: Record<string, number> = {};
+  for (const g of groups) totals[g.account_type] = (totals[g.account_type] ?? 0) + g.net_amount;
+  const assets = totals["asset"] ?? 0;
+  const liabilitiesAll = totals["liability"] ?? 0;
+  const equity = totals["equity"] ?? 0;
+  const revenue = totals["revenue"] ?? 0;
+  const expense = totals["expense"] ?? 0;
+  let trialBalanceSum = 0;
+  for (const g of groups) trialBalanceSum += g.net_amount;
+  const balanced = Math.abs(trialBalanceSum) < 0.01;
+  ok(res, {
+    assets,
+    liabilities: liabilitiesAll,
+    equity,
+    revenue,
+    expense,
+    balanced,
+    raw: totals,
+  });
+});
+
+// Cash flow: operating cash in (payments received) - out (supplier payments + expenses)
+accountingRouter.get("/reports/cash-flow", authenticate, resolveTenant, requireOrg, (req, res) => {
+  const r = req as any;
+  const db = getDb();
+  const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
+  const from = (req.query.from as string) || "1970-01-01";
+  const cashIn = (db.prepare(
+    `SELECT COALESCE(SUM(amount),0) as s FROM payments WHERE organization_id = ? AND payment_type = 'customer_receipt' AND date(paid_at) BETWEEN date(?) AND date(?)`,
+  ).get(r.organizationId, from, to) as any).s;
+  const cashOutPayments = (db.prepare(
+    `SELECT COALESCE(SUM(amount),0) as s FROM payments WHERE organization_id = ? AND payment_type = 'supplier_payment' AND date(paid_at) BETWEEN date(?) AND date(?)`,
+  ).get(r.organizationId, from, to) as any).s;
+  const expenses = (db.prepare(
+    `SELECT COALESCE(SUM(jl.debit),0) as s FROM journal_lines jl JOIN journal_entries je ON je.id = jl.journal_entry_id JOIN accounts a ON a.id = jl.account_id WHERE a.organization_id = ? AND a.account_type = 'expense' AND je.is_posted = 1 AND date(je.created_at) BETWEEN date(?) AND date(?)`,
+  ).get(r.organizationId, from, to) as any).s;
+  const net = cashIn - cashOutPayments - expenses;
+  ok(res, { from, to, cash_in: cashIn, cash_out_payments: cashOutPayments, expenses, net_cash_flow: net });
+});
