@@ -253,3 +253,30 @@ accountingRouter.post("/approvals/:id/decide", authenticate, resolveTenant, requ
     next(e);
   }
 });
+
+// Receivables aging
+accountingRouter.get("/reports/receivables-aging", authenticate, resolveTenant, requireOrg, (req, res) => {
+  const r = req as any;
+  const db = getDb();
+  const rows = db.prepare(
+    `SELECT c.id, c.name, i.number, i.total, i.amount_due, i.due_date,
+            CAST(julianday('now') - julianday(i.due_date) AS INTEGER) as days_overdue
+     FROM invoices i LEFT JOIN customers c ON c.id = i.customer_id
+     WHERE i.organization_id = ? AND i.amount_due > 0
+     ORDER BY i.due_date`,
+  ).all(r.organizationId);
+  ok(res, rows);
+});
+
+// Payables aging (supplier invoices not tracked separately; use purchase orders received unpaid approximation)
+accountingRouter.get("/reports/payables-aging", authenticate, resolveTenant, requireOrg, (req, res) => {
+  const r = req as any;
+  const db = getDb();
+  const rows = db.prepare(
+    `SELECT s.id, s.name, po.number, po.total, po.status, po.expected_date
+     FROM purchase_orders po LEFT JOIN suppliers s ON s.id = po.supplier_id
+     WHERE po.organization_id = ? AND po.status IN ('ordered','received')
+     ORDER BY po.expected_date`,
+  ).all(r.organizationId);
+  ok(res, rows);
+});
