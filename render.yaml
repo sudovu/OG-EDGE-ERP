@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: og-edge-erp-backend
+    runtime: node
+    plan: starter
+    buildCommand: cd backend && npm ci && npm run build && npm run migrate
+    startCommand: cd backend && node dist/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DB_PATH
+        value: /var/data/og-edge.db
+      - key: CORS_ORIGIN
+        sync: false
+    disk:
+      name: og-edge-data
+      mountPath: /var/data
+      sizeGB: 1
+
+  - type: web
+    name: og-edge-erp-frontend
+    runtime: static
+    buildCommand: cd frontend && npm ci && npm run build
+    staticPublishPath: frontend/dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://og-edge-erp-backend.onrender.com/api/v1

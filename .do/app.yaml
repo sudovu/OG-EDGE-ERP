@@ -1,0 +1,27 @@
+name: og-edge-erp
+services:
+  - name: backend
+    dockerfile_path: backend/Dockerfile
+    source_dir: /
+    http_port: 4000
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    envs:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        type: SECRET
+      - key: DB_PATH
+        value: /data/og-edge.db
+    routes:
+      - path: /api
+      - path: /health
+
+  - name: frontend
+    dockerfile_path: frontend/Dockerfile
+    source_dir: /
+    http_port: 80
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    routes:
+      - path: /

@@ -1,0 +1,16 @@
+{
+  "name": "OG-EDGE ERP",
+  "description": "Universal Business Management Platform",
+  "repository": "https://github.com/sudovu/OG-EDGE-ERP",
+  "logo": "",
+  "keywords": ["erp", "business", "management"],
+  "env": {
+    "JWT_SECRET": { "generator": "secret" },
+    "NODE_ENV": { "value": "production" },
+    "DB_PATH": { "value": "/app/data/og-edge.db" }
+  },
+  "buildpacks": [{ "url": "heroku/nodejs" }],
+  "scripts": {
+    "postdeploy": "cd backend && npm run migrate"
+  }
+}
