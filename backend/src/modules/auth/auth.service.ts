@@ -36,8 +36,8 @@ export async function createOrganizationWithOwner(userId: string, name: string):
   const orgId = newId();
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-" + orgId.slice(0, 6);
   db.prepare(
-    "INSERT INTO organizations (id, name, slug) VALUES (?,?,?)",
-  ).run(orgId, name, slug);
+    "INSERT INTO organizations (id, name, slug, base_currency) VALUES (?,?,?,?)",
+  ).run(orgId, name, slug, "NPR");
 
   // membership
   db.prepare("INSERT INTO memberships (id, organization_id, user_id, role) VALUES (?,?,?,?)").run(
@@ -101,7 +101,7 @@ export async function createOrganizationWithOwner(userId: string, name: string):
     newId(),
     orgId,
     "Default",
-    "USD",
+    "NPR",
   );
 
   // default warehouse + location
@@ -127,26 +127,149 @@ function seedPermissions(db: ReturnType<typeof getDb>) {
 }
 
 function seedChartOfAccounts(db: ReturnType<typeof getDb>, orgId: string) {
-  const accounts = [
-    { code: "1000", name: "Cash", type: "asset" },
-    { code: "1100", name: "Bank", type: "asset" },
-    { code: "1200", name: "Accounts Receivable", type: "asset" },
-    { code: "1300", name: "Inventory", type: "asset" },
-    { code: "2000", name: "Accounts Payable", type: "liability" },
-    { code: "2100", name: "Tax Payable", type: "liability" },
-    { code: "3000", name: "Owner Equity", type: "equity" },
-    { code: "4000", name: "Sales Revenue", type: "revenue" },
-    { code: "4100", name: "Service Revenue", type: "revenue" },
+  // Comprehensive Chart of Accounts per Nepal Accounting Standards (NAS) / Nepal Government
+  const accounts: { code: string; name: string; type: string; parent?: string }[] = [
+    // ===== 1. ASSETS =====
+    // 1.1 Current Assets
+    { code: "1000", name: "Current Assets", type: "asset" },
+    { code: "1010", name: "Cash in Hand", type: "asset" },
+    { code: "1011", name: "Petty Cash", type: "asset" },
+    { code: "1020", name: "Cash at Bank - NPR", type: "asset" },
+    { code: "1021", name: "Cash at Bank - Foreign Currency", type: "asset" },
+    { code: "1030", name: "Fixed Deposits", type: "asset" },
+    { code: "1040", name: "Accounts Receivable (Debtors)", type: "asset" },
+    { code: "1041", name: "Notes Receivable", type: "asset" },
+    { code: "1042", name: "Advances to Suppliers", type: "asset" },
+    { code: "1043", name: "Advances to Employees", type: "asset" },
+    { code: "1050", name: "Inventory / Stock in Trade", type: "asset" },
+    { code: "1051", name: "Raw Materials", type: "asset" },
+    { code: "1052", name: "Work in Progress", type: "asset" },
+    { code: "1053", name: "Finished Goods", type: "asset" },
+    { code: "1060", name: "Prepaid Expenses", type: "asset" },
+    { code: "1061", name: "Prepaid Insurance", type: "asset" },
+    { code: "1062", name: "Prepaid Rent", type: "asset" },
+    { code: "1070", name: "Tax Receivable - VAT Input", type: "asset" },
+    { code: "1071", name: "Tax Receivable - TDS", type: "asset" },
+    { code: "1080", name: "Other Current Assets", type: "asset" },
+    // 1.2 Non-Current Assets
+    { code: "1100", name: "Non-Current Assets", type: "asset" },
+    { code: "1110", name: "Land", type: "asset" },
+    { code: "1120", name: "Building", type: "asset" },
+    { code: "1130", name: "Furniture & Fixtures", type: "asset" },
+    { code: "1140", name: "Plant & Machinery", type: "asset" },
+    { code: "1150", name: "Vehicles", type: "asset" },
+    { code: "1160", name: "Computer & Office Equipment", type: "asset" },
+    { code: "1170", name: "Intangible Assets", type: "asset" },
+    { code: "1171", name: "Goodwill", type: "asset" },
+    { code: "1172", name: "Patents & Trademarks", type: "asset" },
+    { code: "1173", name: "Software", type: "asset" },
+    { code: "1180", name: "Long-term Investments", type: "asset" },
+    { code: "1190", name: "Deferred Tax Asset", type: "asset" },
+    { code: "1199", name: "Accumulated Depreciation", type: "asset" },
+
+    // ===== 2. LIABILITIES =====
+    // 2.1 Current Liabilities
+    { code: "2000", name: "Current Liabilities", type: "liability" },
+    { code: "2010", name: "Accounts Payable (Creditors)", type: "liability" },
+    { code: "2011", name: "Notes Payable", type: "liability" },
+    { code: "2020", name: "Short-term Loans", type: "liability" },
+    { code: "2021", name: "Bank Overdraft", type: "liability" },
+    { code: "2030", name: "Accrued Expenses", type: "liability" },
+    { code: "2031", name: "Accrued Salaries & Wages", type: "liability" },
+    { code: "2032", name: "Accrued Interest", type: "liability" },
+    { code: "2040", name: "Advance from Customers", type: "liability" },
+    { code: "2050", name: "VAT Payable (Output VAT 13%)", type: "liability" },
+    { code: "2051", name: "TDS Payable", type: "liability" },
+    { code: "2052", name: "Income Tax Payable", type: "liability" },
+    { code: "2053", name: "Excise Duty Payable", type: "liability" },
+    { code: "2060", name: "Unearned Revenue", type: "liability" },
+    { code: "2070", name: "Other Current Liabilities", type: "liability" },
+    // 2.2 Non-Current Liabilities
+    { code: "2100", name: "Non-Current Liabilities", type: "liability" },
+    { code: "2110", name: "Long-term Loans", type: "liability" },
+    { code: "2120", name: "Debentures", type: "liability" },
+    { code: "2130", name: "Deferred Tax Liability", type: "liability" },
+    { code: "2190", name: "Other Long-term Liabilities", type: "liability" },
+
+    // ===== 3. EQUITY =====
+    { code: "3000", name: "Owner's Equity", type: "equity" },
+    { code: "3010", name: "Capital", type: "equity" },
+    { code: "3020", name: "Drawings", type: "equity" },
+    { code: "3030", name: "Retained Earnings", type: "equity" },
+    { code: "3040", name: "General Reserve", type: "equity" },
+    { code: "3050", name: "Revaluation Reserve", type: "equity" },
+
+    // ===== 4. REVENUE / INCOME =====
+    { code: "4000", name: "Revenue", type: "revenue" },
+    { code: "4010", name: "Sales Revenue - Goods", type: "revenue" },
+    { code: "4020", name: "Service Revenue", type: "revenue" },
+    { code: "4030", name: "Sales Returns & Allowances", type: "revenue" },
+    { code: "4040", name: "Other Operating Income", type: "revenue" },
+    { code: "4050", name: "Interest Income", type: "revenue" },
+    { code: "4060", name: "Discount Received", type: "revenue" },
+    { code: "4070", name: "Gain on Sale of Assets", type: "revenue" },
+    { code: "4080", name: "Foreign Exchange Gain", type: "revenue" },
+    { code: "4090", name: "Miscellaneous Income", type: "revenue" },
+
+    // ===== 5. EXPENSES =====
+    // 5.1 Cost of Goods Sold / Direct Expenses
     { code: "5000", name: "Cost of Goods Sold", type: "expense" },
-    { code: "5100", name: "Operating Expense", type: "expense" },
+    { code: "5010", name: "Purchases", type: "expense" },
+    { code: "5011", name: "Purchase Returns", type: "expense" },
+    { code: "5020", name: "Direct Labor", type: "expense" },
+    { code: "5030", name: "Freight In / Carriage Inward", type: "expense" },
+    { code: "5040", name: "Manufacturing Overhead", type: "expense" },
+    { code: "5050", name: "Customs Duty", type: "expense" },
+    // 5.2 Operating Expenses
+    { code: "5100", name: "Operating Expenses", type: "expense" },
+    { code: "5110", name: "Salaries & Wages", type: "expense" },
+    { code: "5111", name: "Staff Bonus", type: "expense" },
+    { code: "5112", name: "Provident Fund Contribution", type: "expense" },
+    { code: "5113", name: "Gratuity", type: "expense" },
+    { code: "5120", name: "Rent Expense", type: "expense" },
+    { code: "5130", name: "Electricity Expense", type: "expense" },
+    { code: "5131", name: "Water Expense", type: "expense" },
+    { code: "5132", name: "Internet & Telephone", type: "expense" },
+    { code: "5140", name: "Office Supplies", type: "expense" },
+    { code: "5141", name: "Printing & Stationery", type: "expense" },
+    { code: "5150", name: "Depreciation Expense", type: "expense" },
+    { code: "5151", name: "Amortization Expense", type: "expense" },
+    { code: "5160", name: "Insurance Expense", type: "expense" },
+    { code: "5170", name: "Repairs & Maintenance", type: "expense" },
+    { code: "5180", name: "Advertising & Marketing", type: "expense" },
+    { code: "5190", name: "Travel & Conveyance", type: "expense" },
+    { code: "5200", name: "Professional Fees", type: "expense" },
+    { code: "5201", name: "Audit Fees", type: "expense" },
+    { code: "5202", name: "Legal Fees", type: "expense" },
+    { code: "5210", name: "Training & Development", type: "expense" },
+    { code: "5220", name: "Entertainment Expense", type: "expense" },
+    { code: "5230", name: "Bank Charges", type: "expense" },
+    { code: "5240", name: "Bad Debts", type: "expense" },
+    { code: "5250", name: "Donation & Charity", type: "expense" },
+    { code: "5290", name: "Miscellaneous Expense", type: "expense" },
+    // 5.3 Financial Expenses
+    { code: "5300", name: "Financial Expenses", type: "expense" },
+    { code: "5310", name: "Interest Expense", type: "expense" },
+    { code: "5320", name: "Loan Processing Fees", type: "expense" },
+    { code: "5330", name: "Foreign Exchange Loss", type: "expense" },
   ];
   for (const a of accounts) {
     db.prepare("INSERT INTO accounts (id, organization_id, code, name, account_type) VALUES (?,?,?,?,?)").run(
-      newId(),
-      orgId,
-      a.code,
-      a.name,
-      a.type,
+      newId(), orgId, a.code, a.name, a.type,
+    );
+  }
+
+  // Seed Nepal tax rates
+  const taxes = [
+    { name: "VAT 13%", code: "VAT13", rate: 13, tax_type: "vat", is_default: 1 },
+    { name: "TDS - Rent 10%", code: "TDS_RENT", rate: 10, tax_type: "tds", is_default: 0 },
+    { name: "TDS - Service 1.5%", code: "TDS_SVC", rate: 1.5, tax_type: "tds", is_default: 0 },
+    { name: "TDS - Contract 1.5%", code: "TDS_CONT", rate: 1.5, tax_type: "tds", is_default: 0 },
+    { name: "Excise Duty", code: "EXCISE", rate: 0, tax_type: "excise", is_default: 0 },
+  ];
+  for (const t of taxes) {
+    db.prepare("INSERT INTO tax_rates (id, organization_id, name, code, rate, tax_type, is_default) VALUES (?,?,?,?,?,?,?)").run(
+      newId(), orgId, t.name, t.code, t.rate, t.tax_type, t.is_default,
     );
   }
 }

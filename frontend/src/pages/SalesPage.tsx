@@ -5,7 +5,7 @@ export default function SalesPage() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
-  const [form, setForm] = useState({ customer_id: "", currency: "USD", productId: "", quantity: 1, unit_price: 0 });
+  const [form, setForm] = useState({ customer_id: "", currency: "NPR", productId: "", quantity: 1, unit_price: 0 });
   const [lines, setLines] = useState<any[]>([]);
   const [error, setError] = useState("");
 

@@ -4,7 +4,7 @@ import { api } from "../lib/api";
 export default function ServicesPage() {
   const [requests, setRequests] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
-  const [form, setForm] = useState({ title: "", customer_id: "", priority: "normal", currency: "USD", estimated_cost: 0 });
+  const [form, setForm] = useState({ title: "", customer_id: "", priority: "normal", currency: "NPR", estimated_cost: 0 });
   const [error, setError] = useState("");
 
   const load = async () => {
@@ -23,7 +23,7 @@ export default function ServicesPage() {
     e.preventDefault();
     try {
       await api.post("/service-requests", form);
-      setForm({ title: "", customer_id: "", priority: "normal", currency: "USD", estimated_cost: 0 });
+      setForm({ title: "", customer_id: "", priority: "normal", currency: "NPR", estimated_cost: 0 });
       load();
     } catch (err: any) {
       setError(err?.response?.data?.error?.message ?? "Create failed");

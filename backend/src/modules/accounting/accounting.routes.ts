@@ -138,9 +138,9 @@ accountingRouter.post("/accounting/auto-post/invoice/:id", authenticate, resolve
     if (!inv || inv.organization_id !== r.organizationId) throw new Error("Invoice not found");
     const lines = db.prepare("SELECT * FROM invoice_lines WHERE invoice_id = ?").all(req.params.id) as any[];
     // find accounts
-    const ar = db.prepare("SELECT id FROM accounts WHERE organization_id = ? AND code = '1200'").get(r.organizationId) as { id: string };
-    const rev = db.prepare("SELECT id FROM accounts WHERE organization_id = ? AND code = '4000'").get(r.organizationId) as { id: string };
-    const tax = db.prepare("SELECT id FROM accounts WHERE organization_id = ? AND code = '2100'").get(r.organizationId) as { id: string };
+    const ar = db.prepare("SELECT id FROM accounts WHERE organization_id = ? AND code = '1040'").get(r.organizationId) as { id: string };
+    const rev = db.prepare("SELECT id FROM accounts WHERE organization_id = ? AND code = '4010'").get(r.organizationId) as { id: string };
+    const tax = db.prepare("SELECT id FROM accounts WHERE organization_id = ? AND code = '2050'").get(r.organizationId) as { id: string };
     const jeLines: any[] = [
       { account_id: ar.id, debit: inv.total, credit: 0, description: `Invoice ${inv.number}` },
       { account_id: rev.id, debit: 0, credit: inv.subtotal - inv.discount_total, description: `Revenue ${inv.number}` },
@@ -170,8 +170,8 @@ accountingRouter.post("/accounting/auto-post/payment/:id", authenticate, resolve
     const db = getDb();
     const pay = db.prepare("SELECT * FROM payments WHERE id = ?").get(req.params.id) as any;
     if (!pay || pay.organization_id !== r.organizationId) throw new Error("Payment not found");
-    const cash = db.prepare("SELECT id FROM accounts WHERE organization_id = ? AND code = '1000'").get(r.organizationId) as { id: string };
-    const ar = db.prepare("SELECT id FROM accounts WHERE organization_id = ? AND code = '1200'").get(r.organizationId) as { id: string };
+    const cash = db.prepare("SELECT id FROM accounts WHERE organization_id = ? AND code = '1010'").get(r.organizationId) as { id: string };
+    const ar = db.prepare("SELECT id FROM accounts WHERE organization_id = ? AND code = '1040'").get(r.organizationId) as { id: string };
     const number = nextNumber(r.organizationId, "journal_entry", "JE-");
     const id = newId();
     const tx = db.transaction(() => {
@@ -279,4 +279,11 @@ accountingRouter.get("/reports/payables-aging", authenticate, resolveTenant, req
      ORDER BY po.expected_date`,
   ).all(r.organizationId);
   ok(res, rows);
+});
+
+// Tax rates (Nepal VAT/TDS/etc.)
+accountingRouter.get("/tax-rates", authenticate, resolveTenant, requireOrg, (req, res) => {
+  const r = req as any;
+  const db = getDb();
+  ok(res, db.prepare("SELECT * FROM tax_rates WHERE organization_id = ? ORDER BY name").all(r.organizationId));
 });
