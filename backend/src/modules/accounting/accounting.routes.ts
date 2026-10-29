@@ -172,6 +172,8 @@ accountingRouter.post("/accounting/auto-post/payment/:id", authenticate, resolve
     if (!pay || pay.organization_id !== r.organizationId) throw new Error("Payment not found");
     const cash = db.prepare("SELECT id FROM accounts WHERE organization_id = ? AND code = '1010'").get(r.organizationId) as { id: string };
     const ar = db.prepare("SELECT id FROM accounts WHERE organization_id = ? AND code = '1040'").get(r.organizationId) as { id: string };
+    const tdsRec = db.prepare("SELECT id FROM accounts WHERE organization_id = ? AND code = '1071'").get(r.organizationId) as { id: string } | undefined;
+    const gross = (pay.amount ?? 0) + (pay.tds_amount ?? 0);
     const number = nextNumber(r.organizationId, "journal_entry", "JE-");
     const id = newId();
     const tx = db.transaction(() => {
@@ -179,7 +181,10 @@ accountingRouter.post("/accounting/auto-post/payment/:id", authenticate, resolve
         .run(id, r.organizationId, number, new Date().toISOString().slice(0, 10), `Auto-post payment ${pay.id}`, "payment", pay.id, 1, r.user.id);
       const stmt = db.prepare("INSERT INTO journal_lines (id, journal_entry_id, account_id, debit, credit, description, sort_order) VALUES (?,?,?,?,?,?,?)");
       stmt.run(newId(), id, cash.id, pay.amount, 0, "Cash received", 0);
-      stmt.run(newId(), id, ar.id, 0, pay.amount, "AR cleared", 1);
+      if (pay.tds_amount > 0 && tdsRec) {
+        stmt.run(newId(), id, tdsRec.id, pay.tds_amount, 0, "TDS receivable", 1);
+      }
+      stmt.run(newId(), id, ar.id, 0, gross, "AR cleared", 2);
     });
     tx();
     ok(res, { id, number }, 201);
@@ -286,4 +291,41 @@ accountingRouter.get("/tax-rates", authenticate, resolveTenant, requireOrg, (req
   const r = req as any;
   const db = getDb();
   ok(res, db.prepare("SELECT * FROM tax_rates WHERE organization_id = ? ORDER BY name").all(r.organizationId));
+});
+
+// Nepal VAT return summary
+accountingRouter.get("/reports/vat-return", authenticate, resolveTenant, requireOrg, (req, res) => {
+  const r = req as any;
+  const db = getDb();
+  const from = (req.query.from as string) || "1970-01-01";
+  const to = (req.query.to as string) || "2999-12-31";
+  const output = db.prepare(
+    `SELECT COALESCE(SUM(tax_total),0) as vat, COALESCE(SUM(subtotal - discount_total),0) as base, COUNT(*) as invoices
+     FROM invoices WHERE organization_id = ? AND date(created_at) BETWEEN date(?) AND date(?)`,
+  ).get(r.organizationId, from, to) as any;
+  const input = db.prepare(
+    `SELECT COALESCE(SUM(tax_total),0) as vat, COALESCE(SUM(subtotal),0) as base, COUNT(*) as pos
+     FROM purchase_orders WHERE organization_id = ? AND date(created_at) BETWEEN date(?) AND date(?)`,
+  ).get(r.organizationId, from, to) as any;
+  const payable = (output.vat ?? 0) - (input.vat ?? 0);
+  ok(res, {
+    period: { from, to },
+    output_vat: { base: output.base, vat: output.vat, invoices: output.invoices },
+    input_vat: { base: input.base, vat: input.vat, purchase_orders: input.pos },
+    net_vat_payable: payable,
+  });
+});
+
+// TDS summary
+accountingRouter.get("/reports/tds-summary", authenticate, resolveTenant, requireOrg, (req, res) => {
+  const r = req as any;
+  const db = getDb();
+  const from = (req.query.from as string) || "1970-01-01";
+  const to = (req.query.to as string) || "2999-12-31";
+  const rows = db.prepare(
+    `SELECT payment_type, method, COUNT(*) as count, COALESCE(SUM(amount),0) as net, COALESCE(SUM(tds_amount),0) as tds
+     FROM payments WHERE organization_id = ? AND date(paid_at) BETWEEN date(?) AND date(?)
+     GROUP BY payment_type, method`,
+  ).all(r.organizationId, from, to);
+  ok(res, rows);
 });

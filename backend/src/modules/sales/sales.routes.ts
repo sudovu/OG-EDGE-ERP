@@ -71,7 +71,9 @@ salesRouter.post("/quotations", authenticate, resolveTenant, requireOrg, require
     const input = quotationSchema.parse(req.body);
     const r = req as any;
     const db = getDb();
-    const totals = calcTotals(input.lines);
+    const defaultTaxQ = db.prepare("SELECT rate FROM tax_rates WHERE organization_id = ? AND is_default = 1").get(r.organizationId) as { rate: number } | undefined;
+    const linesQ = input.lines.map((l) => ({ ...l, tax_rate: l.tax_rate === undefined ? (defaultTaxQ?.rate ?? 0) : l.tax_rate }));
+    const totals = calcTotals(linesQ);
     const number = nextNumber(r.organizationId, "quotation", "Q-");
     const id = newId();
     const tx = db.transaction(() => {
@@ -82,7 +84,7 @@ salesRouter.post("/quotations", authenticate, resolveTenant, requireOrg, require
       const stmt = db.prepare(
         "INSERT INTO quotation_lines (id, quotation_id, product_id, variant_id, description, quantity, unit_price, discount, tax_rate, line_total, sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
       );
-      input.lines.forEach((l, i) => {
+      linesQ.forEach((l, i) => {
         const lt = calcLine(l).line_total;
         stmt.run(newId(), id, l.product_id ?? null, l.variant_id ?? null, l.description ?? null, l.quantity, l.unit_price, l.discount ?? 0, l.tax_rate ?? 0, lt, i);
       });
@@ -148,7 +150,9 @@ salesRouter.post("/sales-orders", authenticate, resolveTenant, requireOrg, requi
     const input = orderSchema.parse(req.body);
     const r = req as any;
     const db = getDb();
-    const totals = calcTotals(input.lines);
+    const defaultTaxO = db.prepare("SELECT rate FROM tax_rates WHERE organization_id = ? AND is_default = 1").get(r.organizationId) as { rate: number } | undefined;
+    const linesO = input.lines.map((l) => ({ ...l, tax_rate: l.tax_rate === undefined ? (defaultTaxO?.rate ?? 0) : l.tax_rate }));
+    const totals = calcTotals(linesO);
     const number = nextNumber(r.organizationId, "sales_order", "SO-");
     const id = newId();
     const tx = db.transaction(() => {
@@ -159,7 +163,7 @@ salesRouter.post("/sales-orders", authenticate, resolveTenant, requireOrg, requi
       const stmt = db.prepare(
         "INSERT INTO sales_order_lines (id, sales_order_id, product_id, variant_id, description, quantity, unit_price, discount, tax_rate, line_total, sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
       );
-      input.lines.forEach((l, i) => {
+      linesO.forEach((l, i) => {
         const lt = calcLine(l).line_total;
         stmt.run(newId(), id, l.product_id ?? null, l.variant_id ?? null, l.description ?? null, l.quantity, l.unit_price, l.discount ?? 0, l.tax_rate ?? 0, lt, i);
       });
@@ -229,7 +233,14 @@ salesRouter.post("/invoices", authenticate, resolveTenant, requireOrg, requirePe
     const input = invoiceSchema.parse(req.body);
     const r = req as any;
     const db = getDb();
-    const totals = calcTotals(input.lines);
+    // Auto-apply default VAT (Nepal 13%) when tax_rate not explicitly provided
+    const defaultTax = db.prepare("SELECT rate FROM tax_rates WHERE organization_id = ? AND is_default = 1").get(r.organizationId) as { rate: number } | undefined;
+    const defaultRate = defaultTax?.rate ?? 0;
+    const linesWithTax = input.lines.map((l) => ({
+      ...l,
+      tax_rate: l.tax_rate === undefined ? defaultRate : l.tax_rate,
+    }));
+    const totals = calcTotals(linesWithTax);
     const number = nextNumber(r.organizationId, "invoice", "INV-");
     const id = newId();
     const tx = db.transaction(() => {
@@ -240,7 +251,7 @@ salesRouter.post("/invoices", authenticate, resolveTenant, requireOrg, requirePe
       const stmt = db.prepare(
         "INSERT INTO invoice_lines (id, invoice_id, product_id, variant_id, description, quantity, unit_price, discount, tax_rate, line_total, sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
       );
-      input.lines.forEach((l, i) => {
+      linesWithTax.forEach((l, i) => {
         const lt = calcLine(l).line_total;
         stmt.run(newId(), id, l.product_id ?? null, l.variant_id ?? null, l.description ?? null, l.quantity, l.unit_price, l.discount ?? 0, l.tax_rate ?? 0, lt, i);
       });
@@ -274,19 +285,24 @@ salesRouter.post("/payments", authenticate, resolveTenant, requireOrg, requirePe
       currency: z.string(),
       reference: z.string().optional(),
       notes: z.string().optional(),
+      tds_rate: z.number().optional(),
     });
     const input = schema.parse(req.body);
     const r = req as any;
     const db = getDb();
     const id = newId();
+    const tdsRate = input.tds_rate ?? 0;
+    const tdsAmount = Math.round((input.amount * tdsRate / 100) * 100) / 100;
+    const netAmount = input.amount; // amount recorded is net received
     const tx = db.transaction(() => {
       db.prepare(
-        `INSERT INTO payments (id, organization_id, invoice_id, customer_id, supplier_id, payment_type, method, amount, currency, reference, notes, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-      ).run(id, r.organizationId, input.invoice_id ?? null, input.customer_id ?? null, input.supplier_id ?? null, input.payment_type, input.method ?? "cash", input.amount, input.currency, input.reference ?? null, input.notes ?? null, r.user.id);
+        `INSERT INTO payments (id, organization_id, invoice_id, customer_id, supplier_id, payment_type, method, amount, currency, reference, notes, tds_rate, tds_amount, net_amount, created_by)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).run(id, r.organizationId, input.invoice_id ?? null, input.customer_id ?? null, input.supplier_id ?? null, input.payment_type, input.method ?? "cash", input.amount, input.currency, input.reference ?? null, input.notes ?? null, tdsRate, tdsAmount, netAmount, r.user.id);
       if (input.invoice_id) {
         const inv = db.prepare("SELECT total, amount_paid FROM invoices WHERE id = ?").get(input.invoice_id) as { total: number; amount_paid: number };
-        const newPaid = (inv.amount_paid ?? 0) + input.amount;
+        const gross = input.amount + tdsAmount;
+        const newPaid = (inv.amount_paid ?? 0) + gross;
         const due = Math.max(0, inv.total - newPaid);
         const status = due <= 0 ? "paid" : "partial";
         db.prepare("UPDATE invoices SET amount_paid = ?, amount_due = ?, status = ?, updated_at = datetime('now') WHERE id = ?").run(newPaid, due, status, input.invoice_id);
