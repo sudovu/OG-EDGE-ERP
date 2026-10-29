@@ -13,6 +13,7 @@ import SettingsPage from "./pages/SettingsPage";
 import WorkflowsPage from "./pages/WorkflowsPage";
 import AccountingPage from "./pages/AccountingPage";
 import IntegrationsPage from "./pages/IntegrationsPage";
+import LedgerPage from "./pages/LedgerPage";
 
 function useIsAuthed() {
   return !!localStorage.getItem("token");
@@ -30,6 +31,7 @@ function Layout({ children }: { children: React.ReactNode }) {
     { to: "/workflows", label: "Workflows" },
     { to: "/accounting", label: "Accounting" },
     { to: "/integrations", label: "Integrations" },
+    { to: "/ledger", label: "Ledger" },
     { to: "/settings", label: "Settings" },
   ];
   return (
@@ -89,6 +91,7 @@ export default function App() {
       <Route path="/workflows" element={<Guard><WorkflowsPage /></Guard>} />
       <Route path="/accounting" element={<Guard><AccountingPage /></Guard>} />
       <Route path="/integrations" element={<Guard><IntegrationsPage /></Guard>} />
+      <Route path="/ledger" element={<Guard><LedgerPage /></Guard>} />
       <Route path="/settings" element={<Guard><SettingsPage /></Guard>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

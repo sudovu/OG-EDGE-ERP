@@ -329,3 +329,31 @@ accountingRouter.get("/reports/tds-summary", authenticate, resolveTenant, requir
   ).all(r.organizationId, from, to);
   ok(res, rows);
 });
+
+// General ledger / ledger book for an organization: posted journal entries with lines
+accountingRouter.get("/reports/ledger", authenticate, resolveTenant, requireOrg, (req, res) => {
+  const r = req as any;
+  const db = getDb();
+  const from = (req.query.from as string) || "1970-01-01";
+  const to = (req.query.to as string) || "2999-12-31";
+  const entries = db.prepare(
+    `SELECT je.*, je.organization_id AS je_org
+     FROM journal_entries je
+     WHERE je.organization_id = ? AND date(je.created_at) BETWEEN date(?) AND date(?)
+     ORDER BY je.created_at`,
+  ).all(r.organizationId, from, to) as any[];
+  const lines = db.prepare(
+    `SELECT jl.*, a.code, a.name, a.account_type
+     FROM journal_lines jl
+     JOIN accounts a ON a.id = jl.account_id
+     WHERE jl.journal_entry_id IN (
+       SELECT id FROM journal_entries WHERE organization_id = ? AND date(created_at) BETWEEN date(?) AND date(?)
+     )
+     ORDER BY jl.journal_entry_id, jl.sort_order`,
+  ).all(r.organizationId, from, to) as any[];
+  const result = entries.map((e) => ({
+    ...e,
+    lines: lines.filter((l) => l.journal_entry_id === e.id),
+  }));
+  ok(res, result);
+});
