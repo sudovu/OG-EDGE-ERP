@@ -74,9 +74,21 @@ export async function createOrganizationWithOwner(userId: string, name: string):
 
   // default numbering sequences
   for (const et of ["quotation", "sales_order", "invoice", "payment", "purchase_order", "goods_receipt", "service_request", "work_order", "journal_entry", "pos_session"]) {
+    const prefixMap: Record<string, string> = {
+      quotation: "Q-",
+      sales_order: "SO-",
+      invoice: "INV-",
+      payment: "PAY-",
+      purchase_order: "PO-",
+      goods_receipt: "GR-",
+      service_request: "SR-",
+      work_order: "WO-",
+      journal_entry: "JE-",
+      pos_session: "POS-",
+    };
     db.prepare(
       "INSERT INTO numbering_sequences (id, organization_id, entity_type, prefix, next_number, padding) VALUES (?,?,?,?,1,6)",
-    ).run(newId(), orgId, et, "");
+    ).run(newId(), orgId, et, prefixMap[et] ?? "");
   }
 
   // default units
