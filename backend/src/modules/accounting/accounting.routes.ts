@@ -358,36 +358,42 @@ accountingRouter.get("/reports/ledger", authenticate, resolveTenant, requireOrg,
   ok(res, result);
 });
 
-// Balance sheet (Nepal NAS reporting): assets = liabilities + equity
+// Balance sheet (Nepal NAS reporting): assets = liabilities + equity (FX-aware)
 accountingRouter.get("/reports/balance-sheet", authenticate, resolveTenant, requireOrg, (req, res) => {
   const r = req as any;
   const db = getDb();
+  const org = db.prepare("SELECT base_currency FROM organizations WHERE id = ?").get(r.organizationId) as { base_currency: string };
+  const base = org.base_currency ?? "NPR";
+  const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
   const groups = db.prepare(
-    `SELECT a.account_type, COALESCE(SUM(jl.debit - jl.credit), 0) as net_amount
+    `SELECT a.account_type, a.currency, COALESCE(SUM(jl.debit - jl.credit), 0) as net_amount
      FROM accounts a
      LEFT JOIN journal_lines jl ON jl.account_id = a.id
      LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id
      WHERE a.organization_id = ? AND (je.is_posted = 1 OR je.id IS NULL)
-     GROUP BY a.account_type`,
+     GROUP BY a.id`,
   ).all(r.organizationId) as any[];
   const totals: Record<string, number> = {};
-  for (const g of groups) totals[g.account_type] = (totals[g.account_type] ?? 0) + g.net_amount;
+  for (const g of groups) {
+    const rate = getRate(db, r.organizationId, g.currency, base, to);
+    const baseAmount = g.net_amount * rate;
+    totals[g.account_type] = (totals[g.account_type] ?? 0) + baseAmount;
+  }
   const assets = totals["asset"] ?? 0;
   const liabilitiesAll = totals["liability"] ?? 0;
   const equity = totals["equity"] ?? 0;
   const revenue = totals["revenue"] ?? 0;
   const expense = totals["expense"] ?? 0;
   let trialBalanceSum = 0;
-  for (const g of groups) trialBalanceSum += g.net_amount;
+  for (const g of groups) {
+    const rate = getRate(db, r.organizationId, g.currency, base, to);
+    trialBalanceSum += g.net_amount * rate;
+  }
   const balanced = Math.abs(trialBalanceSum) < 0.01;
   ok(res, {
-    assets,
-    liabilities: liabilitiesAll,
-    equity,
-    revenue,
-    expense,
-    balanced,
-    raw: totals,
+    base_currency: base, as_of: to,
+    assets, liabilities: liabilitiesAll, equity, revenue, expense,
+    balanced, raw: totals,
   });
 });
 
@@ -409,3 +415,69 @@ accountingRouter.get("/reports/cash-flow", authenticate, resolveTenant, requireO
   const net = cashIn - cashOutPayments - expenses;
   ok(res, { from, to, cash_in: cashIn, cash_out_payments: cashOutPayments, expenses, net_cash_flow: net });
 });
+
+// ---------- Exchange rates ----------
+const rateSchema = z.object({
+  from_currency: z.string().min(1),
+  to_currency: z.string().optional(),
+  rate: z.number().positive(),
+  effective_from: z.string().optional(),
+  source: z.string().optional(),
+});
+
+accountingRouter.get("/accounting/currency-rates", authenticate, resolveTenant, requireOrg, (req, res) => {
+  const r = req as any;
+  const db = getDb();
+  ok(res, db.prepare("SELECT * FROM currency_rates WHERE organization_id = ? ORDER BY effective_from DESC").all(r.organizationId));
+});
+
+accountingRouter.post("/accounting/currency-rates", authenticate, resolveTenant, requireOrg, requirePermission("accounting.manage"), (req, res, next) => {
+  try {
+    const input = rateSchema.parse(req.body);
+    const r = req as any;
+    const db = getDb();
+    const id = newId();
+    db.prepare(
+      `INSERT INTO currency_rates (id, organization_id, from_currency, to_currency, rate, effective_from, source, created_by)
+       VALUES (?,?,?,?,?,?,?,?)`,
+    ).run(id, r.organizationId, input.from_currency, input.to_currency ?? "NPR", input.rate, input.effective_from ?? new Date().toISOString().slice(0, 10), input.source ?? "manual", r.user.id);
+    ok(res, { id }, 201);
+  } catch (e) {
+    next(e);
+  }
+});
+
+function getRate(db: any, orgId: string, fromCurrency: string, toCurrency: string, asOf: string): number {
+  if (fromCurrency === toCurrency) return 1;
+  const row = db.prepare(
+    `SELECT rate FROM currency_rates WHERE organization_id = ? AND from_currency = ? AND to_currency = ? AND date(effective_from) <= date(?) ORDER BY date(effective_from) DESC LIMIT 1`,
+  ).get(orgId, fromCurrency, toCurrency, asOf) as { rate: number } | undefined;
+  if (!row) throw new Error(`No exchange rate for ${fromCurrency}->${toCurrency} as of ${asOf}`);
+  return row.rate;
+}
+
+// ---------- FX gain/loss report ----------
+accountingRouter.get("/reports/fx-gain-loss", authenticate, resolveTenant, requireOrg, (req, res) => {
+  const r = req as any;
+  const db = getDb();
+  const org = db.prepare("SELECT base_currency FROM organizations WHERE id = ?").get(r.organizationId) as { base_currency: string };
+  const base = org.base_currency ?? "NPR";
+  const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
+  const from = (req.query.from as string) || "1970-01-01";
+  const foreignAccounts = db.prepare(
+    `SELECT id, code, name, currency FROM accounts WHERE organization_id = ? AND currency <> ?`,
+  ).all(r.organizationId, base) as any[];
+  const lines: any[] = [];
+  let totalBaseEquivalent = 0;
+  for (const acc of foreignAccounts as any[]) {
+    const rate = getRate(db, r.organizationId, acc.currency, base, to);
+    const net = (db.prepare(
+      `SELECT COALESCE(SUM(jl.debit - jl.credit),0) as net FROM journal_lines jl JOIN journal_entries je ON je.id = jl.journal_entry_id WHERE jl.account_id = ? AND je.is_posted = 1 AND date(je.created_at) BETWEEN date(?) AND date(?)`,
+    ).get(acc.id, from, to) as any).net;
+    const baseEquivalent = net * rate;
+    lines.push({ account_id: acc.id, code: acc.code, name: acc.name, currency: acc.currency, rate, net_foreign: net, base_equivalent: baseEquivalent });
+    totalBaseEquivalent += baseEquivalent;
+  }
+  ok(res, { base_currency: base, from, to, lines, total_base_equivalent: totalBaseEquivalent });
+});
+
