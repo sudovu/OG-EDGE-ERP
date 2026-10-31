@@ -8,6 +8,7 @@ import { config } from "./config";
 import { errorHandler, notFoundHandler } from "./core/errorHandler";
 import { getDb } from "./db/database";
 import { openapiSpec } from "./docs/openapi";
+import { startScheduler } from "./modules/scheduler/scheduler.service";
 
 export function createApp() {
   const app = express();

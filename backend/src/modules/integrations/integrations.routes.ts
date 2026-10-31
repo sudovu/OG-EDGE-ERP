@@ -7,6 +7,7 @@ import { newId } from "../../shared/ids";
 import { ok, paginated } from "../../shared/response";
 import { parsePagination } from "../../shared/pagination";
 import { processIntegrationEvents, retryFailedEvents } from "../webhooks/webhook.service";
+import { getStatus, startScheduler, stopScheduler, runSchedulerTick } from "../scheduler/scheduler.service";
 import crypto from "node:crypto";
 
 export const integrationsRouter = Router();
@@ -132,4 +133,30 @@ integrationsRouter.get("/webhook-deliveries", authenticate, resolveTenant, requi
   const db = getDb();
   const rows = db.prepare("SELECT * FROM webhook_deliveries WHERE webhook_id IN (SELECT id FROM webhooks WHERE organization_id = ?) ORDER BY delivered_at DESC LIMIT 100").all(r.organizationId) as any[];
   ok(res, rows);
+});
+
+// Scheduler control (background webhook delivery runner)
+integrationsRouter.get("/scheduler/status", authenticate, resolveTenant, requireOrg, requirePermission("org.manage"), (_req, res) => {
+  ok(res, getStatus());
+});
+
+integrationsRouter.post("/scheduler/start", authenticate, resolveTenant, requireOrg, requirePermission("org.manage"), (req, res, next) => {
+  try {
+    const schema = z.object({ interval_ms: z.number().min(1000).optional() });
+    const input = schema.parse(req.body ?? {});
+    startScheduler(input.interval_ms ?? 30000);
+    ok(res, { started: true, interval_ms: input.interval_ms ?? 30000 });
+  } catch (e) {
+    next(e);
+  }
+});
+
+integrationsRouter.post("/scheduler/stop", authenticate, resolveTenant, requireOrg, requirePermission("org.manage"), (_req, res) => {
+  stopScheduler();
+  ok(res, { stopped: true });
+});
+
+integrationsRouter.post("/scheduler/run-now", authenticate, resolveTenant, requireOrg, requirePermission("org.manage"), async (_req, res) => {
+  const status = await runSchedulerTick();
+  ok(res, status);
 });

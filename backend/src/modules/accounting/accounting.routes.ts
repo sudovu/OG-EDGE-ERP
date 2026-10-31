@@ -481,3 +481,97 @@ accountingRouter.get("/reports/fx-gain-loss", authenticate, resolveTenant, requi
   ok(res, { base_currency: base, from, to, lines, total_base_equivalent: totalBaseEquivalent });
 });
 
+
+// ---------- VAT Return (printable form) ----------
+accountingRouter.get("/reports/vat-return-form", authenticate, resolveTenant, requireOrg, (req, res) => {
+  const r = req as any;
+  const db = getDb();
+  const from = (req.query.from as string) || "1970-01-01";
+  const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
+  const org = db.prepare("SELECT name, tax_id, base_currency FROM organizations WHERE id = ?").get(r.organizationId) as { name: string; tax_id: string; base_currency: string };
+
+  // Output VAT: issued invoices with tax_total
+  const output = db.prepare(
+    `SELECT COUNT(*) as invoice_count,
+            COALESCE(SUM(subtotal - discount_total),0) as taxable_amount,
+            COALESCE(SUM(tax_total),0) as output_vat,
+            COALESCE(SUM(total),0) as gross_amount
+     FROM invoices WHERE organization_id = ? AND status IN ('issued','paid','partial') AND date(created_at) BETWEEN date(?) AND date(?)`,
+  ).get(r.organizationId, from, to) as any;
+
+  // Input VAT: purchase orders received with tax on line_total - (quantity*unit_cost)
+  const input = db.prepare(
+    `SELECT COUNT(*) as po_count,
+            COALESCE(SUM(line_total - (quantity * unit_cost)),0) as input_vat,
+            COALESCE(SUM(line_total),0) as purchase_amount
+     FROM purchase_order_lines pol
+     JOIN purchase_orders po ON po.id = pol.purchase_order_id
+     WHERE po.organization_id = ? AND po.status = 'received' AND date(po.created_at) BETWEEN date(?) AND date(?)`,
+  ).get(r.organizationId, from, to) as any;
+
+  const outputVat = output.output_vat ?? 0;
+  const inputVat = input.input_vat ?? 0;
+  const netVatPayable = Math.max(0, outputVat - inputVat);
+  const vatRefund = Math.max(0, inputVat - outputVat);
+
+  ok(res, {
+    form: "VAT Return",
+    organization: { name: org.name, tax_id: org.tax_id, base_currency: org.base_currency },
+    period: { from, to },
+    output_vat: {
+      taxable_amount: output.taxable_amount ?? 0,
+      output_vat: outputVat,
+      invoice_count: output.invoice_count ?? 0,
+    },
+    input_vat: {
+      purchase_amount: input.purchase_amount ?? 0,
+      input_vat: inputVat,
+      purchase_order_count: input.po_count ?? 0,
+    },
+    net_vat_payable: netVatPayable,
+    vat_refund_claim: vatRefund,
+  });
+});
+
+// ---------- TDS Certificate ----------
+accountingRouter.get("/reports/tds-certificate", authenticate, resolveTenant, requireOrg, (req, res) => {
+  const r = req as any;
+  const db = getDb();
+  const from = (req.query.from as string) || "1970-01-01";
+  const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
+  const org = db.prepare("SELECT name, tax_id, base_currency FROM organizations WHERE id = ?").get(r.organizationId) as { name: string; tax_id: string; base_currency: string };
+
+  const rows = db.prepare(
+    `SELECT p.id, p.payment_type, p.method, p.amount, p.tds_rate, p.tds_amount, p.net_amount, p.reference, p.notes, p.paid_at,
+            i.number as invoice_number, i.customer_id,
+            s.name as supplier_name
+     FROM payments p
+     LEFT JOIN invoices i ON i.id = p.invoice_id
+     LEFT JOIN suppliers s ON s.id = p.supplier_id
+     WHERE p.organization_id = ? AND p.tds_amount > 0 AND date(p.paid_at) BETWEEN date(?) AND date(?)
+     ORDER BY p.paid_at DESC`,
+  ).all(r.organizationId, from, to) as any[];
+
+  const totalTds = rows.reduce((s, x) => s + (x.tds_amount ?? 0), 0);
+  const totalNet = rows.reduce((s, x) => s + (x.net_amount ?? 0), 0);
+
+  ok(res, {
+    form: "TDS Certificate",
+    organization: { name: org.name, tax_id: org.tax_id, base_currency: org.base_currency },
+    period: { from, to },
+    total_tds_deducted: totalTds,
+    total_net_paid: totalNet,
+    entries: rows.map((x) => ({
+      payment_id: x.id,
+      invoice_number: x.invoice_number,
+      supplier_name: x.supplier_name,
+      payment_type: x.payment_type,
+      method: x.method,
+      net_amount: x.net_amount,
+      tds_rate: x.tds_rate,
+      tds_amount: x.tds_amount,
+      paid_at: x.paid_at,
+      reference: x.reference,
+    })),
+  });
+});
