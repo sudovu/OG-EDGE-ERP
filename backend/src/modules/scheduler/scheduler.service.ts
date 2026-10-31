@@ -20,7 +20,7 @@ export async function runSchedulerTick(): Promise<SchedulerStatus> {
   isRunning = true;
   try {
     const processed = await processIntegrationEvents();
-    const retried = retryFailedEvents();
+    const retried = await retryFailedEvents();
     lastRun = {
       processed: processed.processed,
       delivered: processed.delivered,

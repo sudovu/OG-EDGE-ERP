@@ -39,11 +39,11 @@ authRouter.post("/auth/login", async (req, res, next) => {
   }
 });
 
-authRouter.get("/auth/me", authenticate, (req, res) => {
+authRouter.get("/auth/me", authenticate, async (req, res) => {
   const r = req as any;
   const db = getDb();
-  const user = db.prepare("SELECT id, email, full_name, is_super_admin FROM users WHERE id = ?").get(r.user.id);
-  const memberships = db.prepare("SELECT organization_id, role FROM memberships WHERE user_id = ? AND is_active = 1").all(r.user.id);
+  const user = await db.prepare("SELECT id, email, full_name, is_super_admin FROM users WHERE id = ?").get([r.user.id]);
+  const memberships = await db.prepare("SELECT organization_id, role FROM memberships WHERE user_id = ? AND is_active = 1").all([r.user.id]);
   ok(res, { user, memberships });
 });
 

@@ -12,26 +12,26 @@ import { logAudit } from "../audit/audit.service";
 export const organizationsRouter = Router();
 
 // List organizations the current user belongs to
-organizationsRouter.get("/organizations", authenticate, (req, res) => {
+organizationsRouter.get("/organizations", authenticate, async (req, res) => {
   const r = req as any;
   const db = getDb();
   let rows;
   if (r.user.isSuperAdmin) {
-    rows = db.prepare("SELECT * FROM organizations ORDER BY created_at DESC").all();
+    rows = await db.prepare("SELECT * FROM organizations ORDER BY created_at DESC").all();
   } else {
-    rows = db
+    rows = await db
       .prepare(
         `SELECT o.* FROM organizations o JOIN memberships m ON m.organization_id = o.id
          WHERE m.user_id = ? AND m.is_active = 1 ORDER BY o.created_at DESC`,
       )
-      .all(r.user.id);
+      .all([r.user.id]);
   }
   ok(res, rows);
 });
 
-organizationsRouter.get("/organizations/:id", authenticate, (req, res) => {
+organizationsRouter.get("/organizations/:id", authenticate, async (req, res) => {
   const db = getDb();
-  const row = db.prepare("SELECT * FROM organizations WHERE id = ?").get(req.params.id);
+  const row = await db.prepare("SELECT * FROM organizations WHERE id = ?").get([req.params.id]);
   if (!row) return fail(res, 404, "Organization not found");
   ok(res, row);
 });
@@ -44,7 +44,7 @@ organizationsRouter.post("/organizations", authenticate, async (req, res, next) 
     const r = req as any;
     const ownerId = input.ownerUserId ?? r.user.id;
     const orgId = await createOrganizationWithOwner(ownerId, input.name);
-    logAudit({ organizationId: orgId, userId: r.user.id, action: "organization.created", entityType: "organization", entityId: orgId });
+    await logAudit({ organizationId: orgId, userId: r.user.id, action: "organization.created", entityType: "organization", entityId: orgId });
     ok(res, { id: orgId }, 201);
   } catch (e) {
     next(e);
@@ -68,7 +68,7 @@ organizationsRouter.patch(
   resolveTenant,
   requireOrg,
   requirePermission("org.manage"),
-  (req, res, next) => {
+  async (req, res, next) => {
     try {
       const input = updateOrgSchema.parse(req.body);
       const db = getDb();
@@ -76,7 +76,7 @@ organizationsRouter.patch(
       if (fields.length === 0) return ok(res, { updated: false });
       const setClause = fields.map((f) => `${f} = ?`).join(", ") + ", updated_at = datetime('now')";
       const values = fields.map((f) => (input as any)[f]);
-      db.prepare(`UPDATE organizations SET ${setClause} WHERE id = ?`).run(...values, req.params.id);
+      await db.prepare(`UPDATE organizations SET ${setClause} WHERE id = ?`).run([...values, req.params.id]);
       ok(res, { updated: true });
     } catch (e) {
       next(e);
@@ -85,22 +85,22 @@ organizationsRouter.patch(
 );
 
 // Branches
-organizationsRouter.get("/branches", authenticate, resolveTenant, requireOrg, (req, res) => {
+organizationsRouter.get("/branches", authenticate, resolveTenant, requireOrg, async (req, res) => {
   const r = req as any;
   const db = getDb();
-  const rows = db.prepare("SELECT * FROM branches WHERE organization_id = ? ORDER BY name").all(r.organizationId);
+  const rows = await db.prepare("SELECT * FROM branches WHERE organization_id = ? ORDER BY name").all([r.organizationId]);
   ok(res, rows);
 });
 
-organizationsRouter.post("/branches", authenticate, resolveTenant, requireOrg, requirePermission("branch.manage"), (req, res, next) => {
+organizationsRouter.post("/branches", authenticate, resolveTenant, requireOrg, requirePermission("branch.manage"), async (req, res, next) => {
   try {
     const schema = z.object({ name: z.string().min(1), code: z.string().optional(), address: z.string().optional(), city: z.string().optional(), country: z.string().optional() });
     const input = schema.parse(req.body);
     const r = req as any;
     const db = getDb();
     const id = newId();
-    db.prepare("INSERT INTO branches (id, organization_id, name, code, address, city, country) VALUES (?,?,?,?,?,?,?)").run(
-      id, r.organizationId, input.name, input.code ?? null, input.address ?? null, input.city ?? null, input.country ?? null,
+    await db.prepare("INSERT INTO branches (id, organization_id, name, code, address, city, country) VALUES (?,?,?,?,?,?,?)").run(
+      [id, r.organizationId, input.name, input.code ?? null, input.address ?? null, input.city ?? null, input.country ?? null],
     );
     ok(res, { id }, 201);
   } catch (e) {
@@ -109,26 +109,25 @@ organizationsRouter.post("/branches", authenticate, resolveTenant, requireOrg, r
 });
 
 // Locations
-organizationsRouter.get("/locations", authenticate, resolveTenant, requireOrg, (req, res) => {
+organizationsRouter.get("/locations", authenticate, resolveTenant, requireOrg, async (req, res) => {
   const r = req as any;
   const db = getDb();
-  const rows = db.prepare("SELECT * FROM locations WHERE organization_id = ? ORDER BY name").all(r.organizationId);
+  const rows = await db.prepare("SELECT * FROM locations WHERE organization_id = ? ORDER BY name").all([r.organizationId]);
   ok(res, rows);
 });
 
-organizationsRouter.post("/locations", authenticate, resolveTenant, requireOrg, requirePermission("branch.manage"), (req, res, next) => {
+organizationsRouter.post("/locations", authenticate, resolveTenant, requireOrg, requirePermission("branch.manage"), async (req, res, next) => {
   try {
     const schema = z.object({ name: z.string().min(1), type: z.string().optional(), branch_id: z.string().optional(), address: z.string().optional() });
     const input = schema.parse(req.body);
     const r = req as any;
     const db = getDb();
     const id = newId();
-    db.prepare("INSERT INTO locations (id, organization_id, branch_id, name, type, address) VALUES (?,?,?,?,?,?)").run(
-      id, r.organizationId, input.branch_id ?? null, input.name, input.type ?? "warehouse", input.address ?? null,
+    await db.prepare("INSERT INTO locations (id, organization_id, branch_id, name, type, address) VALUES (?,?,?,?,?,?)").run(
+      [id, r.organizationId, input.branch_id ?? null, input.name, input.type ?? "warehouse", input.address ?? null],
     );
     ok(res, { id }, 201);
   } catch (e) {
     next(e);
   }
 });
-

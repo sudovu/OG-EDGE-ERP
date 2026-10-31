@@ -19,23 +19,23 @@ export interface TransitionResult {
   entity: any;
 }
 
-export function getAllowedTransitions(orgId: string, entityType: string, currentState: string) {
+export async function getAllowedTransitions(orgId: string, entityType: string, currentState: string) {
   const db = getDb();
-  const wf = db.prepare("SELECT id FROM workflows WHERE organization_id = ? AND entity_type = ? AND is_default = 1").get(orgId, entityType) as { id: string } | undefined;
+  const wf = (await db.prepare("SELECT id FROM workflows WHERE organization_id = ? AND entity_type = ? AND is_default = 1").get([orgId, entityType])) as { id: string } | undefined;
   if (!wf) {
     // fall back to any workflow for entity type
-    const anyWf = db.prepare("SELECT id FROM workflows WHERE organization_id = ? AND entity_type = ?").get(orgId, entityType) as { id: string } | undefined;
+    const anyWf = (await db.prepare("SELECT id FROM workflows WHERE organization_id = ? AND entity_type = ?").get([orgId, entityType])) as { id: string } | undefined;
     if (!anyWf) return [];
     return getTransitionsForWorkflow(anyWf.id, currentState);
   }
   return getTransitionsForWorkflow(wf.id, currentState);
 }
 
-function getTransitionsForWorkflow(workflowId: string, currentState: string) {
+async function getTransitionsForWorkflow(workflowId: string, currentState: string) {
   const db = getDb();
-  const fromState = db.prepare("SELECT id, name, label FROM workflow_states WHERE workflow_id = ? AND name = ?").get(workflowId, currentState) as { id: string; name: string; label: string } | undefined;
+  const fromState = (await db.prepare("SELECT id, name, label FROM workflow_states WHERE workflow_id = ? AND name = ?").get([workflowId, currentState])) as { id: string; name: string; label: string } | undefined;
   if (!fromState) return [];
-  const rows = db
+  const rows = await db
     .prepare(
       `SELECT wt.id, wt.name, fs.name as from_name, ts.name as to_name, ts.label as to_label, wt.required_permission
        FROM workflow_transitions wt
@@ -43,22 +43,22 @@ function getTransitionsForWorkflow(workflowId: string, currentState: string) {
        JOIN workflow_states ts ON ts.id = wt.to_state_id
        WHERE wt.workflow_id = ? AND wt.from_state_id = ?`,
     )
-    .all(workflowId, fromState.id) as any[];
+    .all([workflowId, fromState.id]);
   return rows;
 }
 
-export function transitionEntity(params: {
+export async function transitionEntity(params: {
   orgId: string;
   entityType: string;
   entityId: string;
   toState: string;
   userId: string;
-}): TransitionResult {
+}): Promise<TransitionResult> {
   const db = getDb();
   const mapping = ENTITY_TABLE[params.entityType];
   if (!mapping) throw new ValidationError(`Unsupported entity type: ${params.entityType}`);
 
-  const entity = db.prepare(`SELECT * FROM ${mapping.table} WHERE id = ?`).get(params.entityId) as any;
+  const entity = (await db.prepare(`SELECT * FROM ${mapping.table} WHERE id = ?`).get([params.entityId])) as any;
   if (!entity || entity.organization_id !== params.orgId) throw new NotFoundError("Entity not found");
 
   const currentState = entity[mapping.statusCol];
@@ -66,17 +66,17 @@ export function transitionEntity(params: {
     return { from: currentState, to: params.toState, entity };
   }
 
-  const transitions = getAllowedTransitions(params.orgId, params.entityType, currentState);
+  const transitions = (await getAllowedTransitions(params.orgId, params.entityType, currentState)) as any[];
   const tr = transitions.find((t: any) => t.to_name === params.toState);
   if (!tr) throw new ValidationError(`Transition from '${currentState}' to '${params.toState}' is not allowed`);
 
-  if (tr.required_permission && !hasPermission(params.userId, params.orgId, tr.required_permission)) {
+  if (tr.required_permission && !(await hasPermission(params.userId, params.orgId, tr.required_permission))) {
     throw new ForbiddenError(`Missing permission: ${tr.required_permission}`);
   }
 
-  db.prepare(`UPDATE ${mapping.table} SET ${mapping.statusCol} = ?, updated_at = datetime('now') WHERE id = ?`).run(params.toState, params.entityId);
-  const updated = db.prepare(`SELECT * FROM ${mapping.table} WHERE id = ?`).get(params.entityId);
-  logAudit({
+  await db.prepare(`UPDATE ${mapping.table} SET ${mapping.statusCol} = ?, updated_at = datetime('now') WHERE id = ?`).run([params.toState, params.entityId]);
+  const updated = (await db.prepare(`SELECT * FROM ${mapping.table} WHERE id = ?`).get([params.entityId])) as any;
+  await logAudit({
     organizationId: params.orgId,
     userId: params.userId,
     action: `${params.entityType}.transition`,

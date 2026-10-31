@@ -39,13 +39,13 @@ function calcTotals(lines: any[]) {
 }
 
 // ---------- Quotations ----------
-salesRouter.get("/quotations", authenticate, resolveTenant, requireOrg, (req, res) => {
+salesRouter.get("/quotations", authenticate, resolveTenant, requireOrg, async (req, res) => {
   const r = req as any;
   const db = getDb();
   const { page, pageSize, offset } = parsePagination(req.query as any);
-  const total = (db.prepare("SELECT COUNT(*) as c FROM quotations WHERE organization_id = ?").get(r.organizationId) as any).c;
-  const rows = db.prepare("SELECT * FROM quotations WHERE organization_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?").all(r.organizationId, pageSize, offset);
-  paginated(res, rows, total, page, pageSize);
+  const total = (await db.prepare("SELECT COUNT(*) as c FROM quotations WHERE organization_id = ?").get([r.organizationId])) as any;
+  const rows = await db.prepare("SELECT * FROM quotations WHERE organization_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?").all([r.organizationId, pageSize, offset]);
+  paginated(res, rows, total.c, page, pageSize);
 });
 
 const quotationLineSchema = z.object({
@@ -67,30 +67,29 @@ const quotationSchema = z.object({
   lines: z.array(quotationLineSchema).min(1),
 });
 
-salesRouter.post("/quotations", authenticate, resolveTenant, requireOrg, requirePermission("sales.create"), (req, res, next) => {
+salesRouter.post("/quotations", authenticate, resolveTenant, requireOrg, requirePermission("sales.create"), async (req, res, next) => {
   try {
     const input = quotationSchema.parse(req.body);
     const r = req as any;
     const db = getDb();
-    const defaultTaxQ = db.prepare("SELECT rate FROM tax_rates WHERE organization_id = ? AND is_default = 1").get(r.organizationId) as { rate: number } | undefined;
+    const defaultTaxQ = (await db.prepare("SELECT rate FROM tax_rates WHERE organization_id = ? AND is_default = 1").get([r.organizationId])) as { rate: number } | undefined;
     const linesQ = input.lines.map((l) => ({ ...l, tax_rate: l.tax_rate === undefined ? (defaultTaxQ?.rate ?? 0) : l.tax_rate }));
     const totals = calcTotals(linesQ);
-    const number = nextNumber(r.organizationId, "quotation", "Q-");
+    const number = await nextNumber(r.organizationId, "quotation", "Q-");
     const id = newId();
-    const tx = db.transaction(() => {
-      db.prepare(
+    await db.transaction(async () => {
+      await db.prepare(
         `INSERT INTO quotations (id, organization_id, branch_id, customer_id, number, currency, subtotal, discount_total, tax_total, total, valid_until, notes, created_by)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      ).run(id, r.organizationId, input.branch_id ?? null, input.customer_id ?? null, number, input.currency, totals.subtotal, totals.discount_total, totals.tax_total, totals.total, input.valid_until ?? null, input.notes ?? null, r.user.id);
+      ).run([id, r.organizationId, input.branch_id ?? null, input.customer_id ?? null, number, input.currency, totals.subtotal, totals.discount_total, totals.tax_total, totals.total, input.valid_until ?? null, input.notes ?? null, r.user.id]);
       const stmt = db.prepare(
         "INSERT INTO quotation_lines (id, quotation_id, product_id, variant_id, description, quantity, unit_price, discount, tax_rate, line_total, sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
       );
-      linesQ.forEach((l, i) => {
+      for (const [i, l] of linesQ.entries()) {
         const lt = calcLine(l).line_total;
-        stmt.run(newId(), id, l.product_id ?? null, l.variant_id ?? null, l.description ?? null, l.quantity, l.unit_price, l.discount ?? 0, l.tax_rate ?? 0, lt, i);
-      });
+        await stmt.run([newId(), id, l.product_id ?? null, l.variant_id ?? null, l.description ?? null, l.quantity, l.unit_price, l.discount ?? 0, l.tax_rate ?? 0, lt, i]);
+      }
     });
-    tx();
     queueEvent({ organizationId: r.organizationId, event: "quotation.created", payload: { id, number } });
     ok(res, { id, number }, 201);
   } catch (e) {
@@ -98,20 +97,20 @@ salesRouter.post("/quotations", authenticate, resolveTenant, requireOrg, require
   }
 });
 
-salesRouter.get("/quotations/:id", authenticate, resolveTenant, requireOrg, (req, res) => {
+salesRouter.get("/quotations/:id", authenticate, resolveTenant, requireOrg, async (req, res) => {
   const db = getDb();
-  const q = db.prepare("SELECT * FROM quotations WHERE id = ?").get(req.params.id);
+  const q = (await db.prepare("SELECT * FROM quotations WHERE id = ?").get([req.params.id])) as any;
   if (!q) return (res as any).status(404).json({ success: false, error: { message: "Not found" } });
-  const lines = db.prepare("SELECT * FROM quotation_lines WHERE quotation_id = ? ORDER BY sort_order").all(req.params.id);
-  ok(res, { ...(q as any), lines });
+  const lines = await db.prepare("SELECT * FROM quotation_lines WHERE quotation_id = ? ORDER BY sort_order").all([req.params.id]);
+  ok(res, { ...q, lines });
 });
 
-salesRouter.patch("/quotations/:id/status", authenticate, resolveTenant, requireOrg, requirePermission("sales.update"), (req, res, next) => {
+salesRouter.patch("/quotations/:id/status", authenticate, resolveTenant, requireOrg, requirePermission("sales.update"), async (req, res, next) => {
   try {
     const schema = z.object({ status: z.string() });
     const input = schema.parse(req.body);
     const db = getDb();
-    db.prepare("UPDATE quotations SET status = ?, updated_at = datetime('now') WHERE id = ?").run(input.status, req.params.id);
+    await db.prepare("UPDATE quotations SET status = ?, updated_at = datetime('now') WHERE id = ?").run([input.status, req.params.id]);
     ok(res, { updated: true });
   } catch (e) {
     next(e);
@@ -119,13 +118,13 @@ salesRouter.patch("/quotations/:id/status", authenticate, resolveTenant, require
 });
 
 // ---------- Sales Orders ----------
-salesRouter.get("/sales-orders", authenticate, resolveTenant, requireOrg, (req, res) => {
+salesRouter.get("/sales-orders", authenticate, resolveTenant, requireOrg, async (req, res) => {
   const r = req as any;
   const db = getDb();
   const { page, pageSize, offset } = parsePagination(req.query as any);
-  const total = (db.prepare("SELECT COUNT(*) as c FROM sales_orders WHERE organization_id = ?").get(r.organizationId) as any).c;
-  const rows = db.prepare("SELECT * FROM sales_orders WHERE organization_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?").all(r.organizationId, pageSize, offset);
-  paginated(res, rows, total, page, pageSize);
+  const total = (await db.prepare("SELECT COUNT(*) as c FROM sales_orders WHERE organization_id = ?").get([r.organizationId])) as any;
+  const rows = await db.prepare("SELECT * FROM sales_orders WHERE organization_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?").all([r.organizationId, pageSize, offset]);
+  paginated(res, rows, total.c, page, pageSize);
 });
 
 const orderLineSchema = z.object({
@@ -147,33 +146,32 @@ const orderSchema = z.object({
   lines: z.array(orderLineSchema).min(1),
 });
 
-salesRouter.post("/sales-orders", authenticate, resolveTenant, requireOrg, requirePermission("sales.create"), (req, res, next) => {
+salesRouter.post("/sales-orders", authenticate, resolveTenant, requireOrg, requirePermission("sales.create"), async (req, res, next) => {
   try {
     const input = orderSchema.parse(req.body);
     const r = req as any;
     const db = getDb();
-    const defaultTaxO = db.prepare("SELECT rate FROM tax_rates WHERE organization_id = ? AND is_default = 1").get(r.organizationId) as { rate: number } | undefined;
+    const defaultTaxO = (await db.prepare("SELECT rate FROM tax_rates WHERE organization_id = ? AND is_default = 1").get([r.organizationId])) as { rate: number } | undefined;
     const linesO = input.lines.map((l) => ({ ...l, tax_rate: l.tax_rate === undefined ? (defaultTaxO?.rate ?? 0) : l.tax_rate }));
     const totals = calcTotals(linesO);
-    const number = nextNumber(r.organizationId, "sales_order", "SO-");
+    const number = await nextNumber(r.organizationId, "sales_order", "SO-");
     const id = newId();
-    const tx = db.transaction(() => {
-      db.prepare(
+    await db.transaction(async () => {
+      await db.prepare(
         `INSERT INTO sales_orders (id, organization_id, branch_id, customer_id, quotation_id, number, currency, subtotal, discount_total, tax_total, total, notes, created_by)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      ).run(id, r.organizationId, input.branch_id ?? null, input.customer_id ?? null, input.quotation_id ?? null, number, input.currency, totals.subtotal, totals.discount_total, totals.tax_total, totals.total, input.notes ?? null, r.user.id);
+      ).run([id, r.organizationId, input.branch_id ?? null, input.customer_id ?? null, input.quotation_id ?? null, number, input.currency, totals.subtotal, totals.discount_total, totals.tax_total, totals.total, input.notes ?? null, r.user.id]);
       const stmt = db.prepare(
         "INSERT INTO sales_order_lines (id, sales_order_id, product_id, variant_id, description, quantity, unit_price, discount, tax_rate, line_total, sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
       );
-      linesO.forEach((l, i) => {
+      for (const [i, l] of linesO.entries()) {
         const lt = calcLine(l).line_total;
-        stmt.run(newId(), id, l.product_id ?? null, l.variant_id ?? null, l.description ?? null, l.quantity, l.unit_price, l.discount ?? 0, l.tax_rate ?? 0, lt, i);
-      });
+        await stmt.run([newId(), id, l.product_id ?? null, l.variant_id ?? null, l.description ?? null, l.quantity, l.unit_price, l.discount ?? 0, l.tax_rate ?? 0, lt, i]);
+      }
       if (input.quotation_id) {
-        db.prepare("UPDATE quotations SET status = 'converted', updated_at = datetime('now') WHERE id = ?").run(input.quotation_id);
+        await db.prepare("UPDATE quotations SET status = 'converted', updated_at = datetime('now') WHERE id = ?").run([input.quotation_id]);
       }
     });
-    tx();
     queueEvent({ organizationId: r.organizationId, event: "sales_order.created", payload: { id, number } });
     ok(res, { id, number }, 201);
   } catch (e) {
@@ -181,20 +179,20 @@ salesRouter.post("/sales-orders", authenticate, resolveTenant, requireOrg, requi
   }
 });
 
-salesRouter.get("/sales-orders/:id", authenticate, resolveTenant, requireOrg, (req, res) => {
+salesRouter.get("/sales-orders/:id", authenticate, resolveTenant, requireOrg, async (req, res) => {
   const db = getDb();
-  const o = db.prepare("SELECT * FROM sales_orders WHERE id = ?").get(req.params.id);
+  const o = (await db.prepare("SELECT * FROM sales_orders WHERE id = ?").get([req.params.id])) as any;
   if (!o) return (res as any).status(404).json({ success: false, error: { message: "Not found" } });
-  const lines = db.prepare("SELECT * FROM sales_order_lines WHERE sales_order_id = ? ORDER BY sort_order").all(req.params.id);
-  ok(res, { ...(o as any), lines });
+  const lines = await db.prepare("SELECT * FROM sales_order_lines WHERE sales_order_id = ? ORDER BY sort_order").all([req.params.id]);
+  ok(res, { ...o, lines });
 });
 
-salesRouter.patch("/sales-orders/:id/status", authenticate, resolveTenant, requireOrg, requirePermission("sales.update"), (req, res, next) => {
+salesRouter.patch("/sales-orders/:id/status", authenticate, resolveTenant, requireOrg, requirePermission("sales.update"), async (req, res, next) => {
   try {
     const schema = z.object({ status: z.string() });
     const input = schema.parse(req.body);
     const db = getDb();
-    db.prepare("UPDATE sales_orders SET status = ?, updated_at = datetime('now') WHERE id = ?").run(input.status, req.params.id);
+    await db.prepare("UPDATE sales_orders SET status = ?, updated_at = datetime('now') WHERE id = ?").run([input.status, req.params.id]);
     ok(res, { updated: true });
   } catch (e) {
     next(e);
@@ -202,13 +200,13 @@ salesRouter.patch("/sales-orders/:id/status", authenticate, resolveTenant, requi
 });
 
 // ---------- Invoices ----------
-salesRouter.get("/invoices", authenticate, resolveTenant, requireOrg, (req, res) => {
+salesRouter.get("/invoices", authenticate, resolveTenant, requireOrg, async (req, res) => {
   const r = req as any;
   const db = getDb();
   const { page, pageSize, offset } = parsePagination(req.query as any);
-  const total = (db.prepare("SELECT COUNT(*) as c FROM invoices WHERE organization_id = ?").get(r.organizationId) as any).c;
-  const rows = db.prepare("SELECT * FROM invoices WHERE organization_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?").all(r.organizationId, pageSize, offset);
-  paginated(res, rows, total, page, pageSize);
+  const total = (await db.prepare("SELECT COUNT(*) as c FROM invoices WHERE organization_id = ?").get([r.organizationId])) as any;
+  const rows = await db.prepare("SELECT * FROM invoices WHERE organization_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?").all([r.organizationId, pageSize, offset]);
+  paginated(res, rows, total.c, page, pageSize);
 });
 
 const invoiceLineSchema = z.object({
@@ -231,36 +229,35 @@ const invoiceSchema = z.object({
   lines: z.array(invoiceLineSchema).min(1),
 });
 
-salesRouter.post("/invoices", authenticate, resolveTenant, requireOrg, requirePermission("sales.create"), (req, res, next) => {
+salesRouter.post("/invoices", authenticate, resolveTenant, requireOrg, requirePermission("sales.create"), async (req, res, next) => {
   try {
     const input = invoiceSchema.parse(req.body);
     const r = req as any;
     const db = getDb();
     // Auto-apply default VAT (Nepal 13%) when tax_rate not explicitly provided
-    const defaultTax = db.prepare("SELECT rate FROM tax_rates WHERE organization_id = ? AND is_default = 1").get(r.organizationId) as { rate: number } | undefined;
+    const defaultTax = (await db.prepare("SELECT rate FROM tax_rates WHERE organization_id = ? AND is_default = 1").get([r.organizationId])) as { rate: number } | undefined;
     const defaultRate = defaultTax?.rate ?? 0;
     const linesWithTax = input.lines.map((l) => ({
       ...l,
       tax_rate: l.tax_rate === undefined ? defaultRate : l.tax_rate,
     }));
     const totals = calcTotals(linesWithTax);
-    const number = nextNumber(r.organizationId, "invoice", "INV-");
+    const number = await nextNumber(r.organizationId, "invoice", "INV-");
     const id = newId();
-    const tx = db.transaction(() => {
-      db.prepare(
+    await db.transaction(async () => {
+      await db.prepare(
         `INSERT INTO invoices (id, organization_id, branch_id, customer_id, sales_order_id, number, status, currency, subtotal, discount_total, tax_total, total, amount_due, due_date, notes, created_by)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      ).run(id, r.organizationId, input.branch_id ?? null, input.customer_id ?? null, input.sales_order_id ?? null, number, "issued", input.currency, totals.subtotal, totals.discount_total, totals.tax_total, totals.total, totals.total, input.due_date ?? null, input.notes ?? null, r.user.id);
+      ).run([id, r.organizationId, input.branch_id ?? null, input.customer_id ?? null, input.sales_order_id ?? null, number, "issued", input.currency, totals.subtotal, totals.discount_total, totals.tax_total, totals.total, totals.total, input.due_date ?? null, input.notes ?? null, r.user.id]);
       const stmt = db.prepare(
         "INSERT INTO invoice_lines (id, invoice_id, product_id, variant_id, description, quantity, unit_price, discount, tax_rate, line_total, sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
       );
-      linesWithTax.forEach((l, i) => {
+      for (const [i, l] of linesWithTax.entries()) {
         const lt = calcLine(l).line_total;
-        stmt.run(newId(), id, l.product_id ?? null, l.variant_id ?? null, l.description ?? null, l.quantity, l.unit_price, l.discount ?? 0, l.tax_rate ?? 0, lt, i);
-      });
-      db.prepare("UPDATE invoices SET issued_at = datetime('now') WHERE id = ?").run(id);
+        await stmt.run([newId(), id, l.product_id ?? null, l.variant_id ?? null, l.description ?? null, l.quantity, l.unit_price, l.discount ?? 0, l.tax_rate ?? 0, lt, i]);
+      }
+      await db.prepare("UPDATE invoices SET issued_at = datetime('now') WHERE id = ?").run([id]);
     });
-    tx();
     queueEvent({ organizationId: r.organizationId, event: "invoice.created", payload: { id, number } });
     ok(res, { id, number }, 201);
   } catch (e) {
@@ -268,16 +265,16 @@ salesRouter.post("/invoices", authenticate, resolveTenant, requireOrg, requirePe
   }
 });
 
-salesRouter.get("/invoices/:id", authenticate, resolveTenant, requireOrg, (req, res) => {
+salesRouter.get("/invoices/:id", authenticate, resolveTenant, requireOrg, async (req, res) => {
   const db = getDb();
-  const inv = db.prepare("SELECT * FROM invoices WHERE id = ?").get(req.params.id);
+  const inv = (await db.prepare("SELECT * FROM invoices WHERE id = ?").get([req.params.id])) as any;
   if (!inv) return (res as any).status(404).json({ success: false, error: { message: "Not found" } });
-  const lines = db.prepare("SELECT * FROM invoice_lines WHERE invoice_id = ? ORDER BY sort_order").all(req.params.id);
-  ok(res, { ...(inv as any), lines });
+  const lines = await db.prepare("SELECT * FROM invoice_lines WHERE invoice_id = ? ORDER BY sort_order").all([req.params.id]);
+  ok(res, { ...inv, lines });
 });
 
 // Record payment against invoice
-salesRouter.post("/payments", authenticate, resolveTenant, requireOrg, requirePermission("sales.create"), (req, res, next) => {
+salesRouter.post("/payments", authenticate, resolveTenant, requireOrg, requirePermission("sales.create"), async (req, res, next) => {
   try {
     const schema = z.object({
       invoice_id: z.string().optional(),
@@ -298,21 +295,20 @@ salesRouter.post("/payments", authenticate, resolveTenant, requireOrg, requirePe
     const tdsRate = input.tds_rate ?? 0;
     const tdsAmount = Math.round((input.amount * tdsRate / 100) * 100) / 100;
     const netAmount = input.amount; // amount recorded is net received
-    const tx = db.transaction(() => {
-      db.prepare(
+    await db.transaction(async () => {
+      await db.prepare(
         `INSERT INTO payments (id, organization_id, invoice_id, customer_id, supplier_id, payment_type, method, amount, currency, reference, notes, tds_rate, tds_amount, net_amount, created_by)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      ).run(id, r.organizationId, input.invoice_id ?? null, input.customer_id ?? null, input.supplier_id ?? null, input.payment_type, input.method ?? "cash", input.amount, input.currency, input.reference ?? null, input.notes ?? null, tdsRate, tdsAmount, netAmount, r.user.id);
+      ).run([id, r.organizationId, input.invoice_id ?? null, input.customer_id ?? null, input.supplier_id ?? null, input.payment_type, input.method ?? "cash", input.amount, input.currency, input.reference ?? null, input.notes ?? null, tdsRate, tdsAmount, netAmount, r.user.id]);
       if (input.invoice_id) {
-        const inv = db.prepare("SELECT total, amount_paid FROM invoices WHERE id = ?").get(input.invoice_id) as { total: number; amount_paid: number };
+        const inv = (await db.prepare("SELECT total, amount_paid FROM invoices WHERE id = ?").get([input.invoice_id])) as { total: number; amount_paid: number };
         const gross = input.amount + tdsAmount;
         const newPaid = (inv.amount_paid ?? 0) + gross;
         const due = Math.max(0, inv.total - newPaid);
         const status = due <= 0 ? "paid" : "partial";
-        db.prepare("UPDATE invoices SET amount_paid = ?, amount_due = ?, status = ?, updated_at = datetime('now') WHERE id = ?").run(newPaid, due, status, input.invoice_id);
+        await db.prepare("UPDATE invoices SET amount_paid = ?, amount_due = ?, status = ?, updated_at = datetime('now') WHERE id = ?").run([newPaid, due, status, input.invoice_id]);
       }
     });
-    tx();
     queueEvent({ organizationId: r.organizationId, event: "payment.created", payload: { id, invoice_id: input.invoice_id, amount: input.amount, currency: input.currency } });
     ok(res, { id }, 201);
   } catch (e) {
@@ -320,10 +316,9 @@ salesRouter.post("/payments", authenticate, resolveTenant, requireOrg, requirePe
   }
 });
 
-salesRouter.get("/payments", authenticate, resolveTenant, requireOrg, (req, res) => {
+salesRouter.get("/payments", authenticate, resolveTenant, requireOrg, async (req, res) => {
   const r = req as any;
   const db = getDb();
-  const rows = db.prepare("SELECT * FROM payments WHERE organization_id = ? ORDER BY paid_at DESC").all(r.organizationId);
+  const rows = await db.prepare("SELECT * FROM payments WHERE organization_id = ? ORDER BY paid_at DESC").all([r.organizationId]);
   ok(res, rows);
 });
-

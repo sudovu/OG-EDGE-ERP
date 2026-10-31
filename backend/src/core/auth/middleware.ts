@@ -28,7 +28,7 @@ export function requireSuperAdmin(req: AuthedRequest, _res: Response, next: Next
 }
 
 // Resolves organization context from X-Organization-Id header or query, validates membership.
-export function resolveTenant(req: AuthedRequest, _res: Response, next: NextFunction) {
+export async function resolveTenant(req: AuthedRequest, _res: Response, next: NextFunction) {
   if (req.user?.isSuperAdmin && !req.headers["x-organization-id"] && !req.query.orgId) {
     // super admin may operate without tenant; skip
     return next();
@@ -39,9 +39,9 @@ export function resolveTenant(req: AuthedRequest, _res: Response, next: NextFunc
     (req.body?.organizationId as string | undefined);
   if (!orgId) return next(new ForbiddenError("Organization context required (X-Organization-Id)"));
   const db = getDb();
-  const mem = db
+  const mem = (await db
     .prepare("SELECT role, is_active FROM memberships WHERE organization_id = ? AND user_id = ?")
-    .get(orgId, req.user!.id) as { role: string; is_active: number } | undefined;
+    .get([orgId, req.user!.id])) as { role: string; is_active: number } | undefined;
   if (!mem || mem.is_active !== 1) {
     // super admin bypass membership check
     if (!req.user?.isSuperAdmin) return next(new ForbiddenError("Not a member of this organization"));
@@ -55,4 +55,3 @@ export function requireOrg(req: AuthedRequest, _res: Response, next: NextFunctio
   if (!req.organizationId) return next(new ForbiddenError("Organization context required"));
   next();
 }
-

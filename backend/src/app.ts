@@ -20,9 +20,9 @@ export function createApp() {
   app.use(morgan("dev"));
 
   // health with DB check
-  app.get("/health", (_req, res) => {
+  app.get("/health", async (_req, res) => {
     try {
-      getDb().prepare("SELECT 1").get();
+      await getDb().prepare("SELECT 1").get();
       res.json({ success: true, data: { status: "ok", name: "OG-EDGE ERP", env: config.nodeEnv, db: "ok" } });
     } catch (e) {
       res.status(503).json({ success: false, data: { status: "degraded", db: "error" } });
@@ -30,11 +30,11 @@ export function createApp() {
   });
 
   // metrics (basic)
-  app.get("/metrics", (_req, res) => {
+  app.get("/metrics", async (_req, res) => {
     const db = getDb();
-    const orgs = (db.prepare("SELECT COUNT(*) as c FROM organizations").get() as any).c;
-    const users = (db.prepare("SELECT COUNT(*) as c FROM users").get() as any).c;
-    res.json({ success: true, data: { organizations: orgs, users, uptime: process.uptime(), memory: process.memoryUsage() } });
+    const orgs = (await db.prepare("SELECT COUNT(*) as c FROM organizations").get()) as any;
+    const users = (await db.prepare("SELECT COUNT(*) as c FROM users").get()) as any;
+    res.json({ success: true, data: { organizations: orgs.c, users: users.c, uptime: process.uptime(), memory: process.memoryUsage() } });
   });
 
   return app;

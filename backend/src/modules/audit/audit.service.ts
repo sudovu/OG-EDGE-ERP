@@ -1,7 +1,7 @@
 import { getDb } from "../../db/database";
 import { newId } from "../../shared/ids";
 
-export function logAudit(params: {
+export async function logAudit(params: {
   organizationId?: string | null;
   userId?: string | null;
   action: string;
@@ -11,10 +11,10 @@ export function logAudit(params: {
   ipAddress?: string;
 }) {
   const db = getDb();
-  db.prepare(
+  await db.prepare(
     `INSERT INTO audit_logs (id, organization_id, user_id, action, entity_type, entity_id, metadata_json, ip_address)
      VALUES (?,?,?,?,?,?,?,?)`,
-  ).run(
+  ).run([
     newId(),
     params.organizationId ?? null,
     params.userId ?? null,
@@ -23,6 +23,5 @@ export function logAudit(params: {
     params.entityId ?? null,
     params.metadata ? JSON.stringify(params.metadata) : null,
     params.ipAddress ?? null,
-  );
+  ]);
 }
-

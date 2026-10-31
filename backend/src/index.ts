@@ -1,6 +1,6 @@
 import { createApp, mountRoutes } from "./app";
 import { config } from "./config";
-import { getDb, closeDb } from "./db/database";
+import { closeDb } from "./db/database";
 import { runMigrations } from "./db/migrate";
 import { seedPermissionsIfNeeded } from "./db/seed";
 import { apiRouter } from "./routes";
@@ -8,31 +8,36 @@ import { logger } from "./core/logger";
 import { errorHandler, notFoundHandler } from "./core/errorHandler";
 import { startScheduler, stopScheduler } from "./modules/scheduler/scheduler.service";
 
-// ensure db + migrations at startup
-getDb();
-runMigrations();
-seedPermissionsIfNeeded();
+async function main() {
+  // ensure db + migrations at startup
+  await runMigrations();
+  await seedPermissionsIfNeeded();
 
-// start scheduled background job runner (webhook deliveries + retries)
-startScheduler(30000);
+  // start scheduled background job runner (webhook deliveries + retries)
+  startScheduler(30000);
 
-const app = createApp();
-mountRoutes(app, apiRouter);
+  const app = createApp();
+  mountRoutes(app, apiRouter);
 
-const server = app.listen(config.port, () => {
-  logger.info({ port: config.port }, "OG-EDGE ERP backend listening");
+  const server = app.listen(config.port, () => {
+    logger.info({ port: config.port }, "OG-EDGE ERP backend listening");
+  });
+
+  process.on("SIGINT", async () => {
+    stopScheduler();
+    server.close();
+    await closeDb();
+    process.exit(0);
+  });
+  process.on("SIGTERM", async () => {
+    stopScheduler();
+    server.close();
+    await closeDb();
+    process.exit(0);
+  });
+}
+
+main().catch((e) => {
+  logger.error({ err: e?.message }, "startup failed");
+  process.exit(1);
 });
-
-process.on("SIGINT", () => {
-  stopScheduler();
-  server.close();
-  closeDb();
-  process.exit(0);
-});
-process.on("SIGTERM", () => {
-  stopScheduler();
-  server.close();
-  closeDb();
-  process.exit(0);
-});
-
