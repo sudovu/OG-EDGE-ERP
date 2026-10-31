@@ -7,3 +7,9 @@ data/
 .env.local
 .DS_Store
 coverage/
+
+# Playwright test artifacts
+playwright-report/
+test-results/
+blob-report/
+trace/
