@@ -1,0 +1,16 @@
+const fs = require("fs");
+const path = require("path");
+const dir = path.join(process.env.TEMP, "ogedge-test");
+if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+const dbPath = path.join(dir, "fresh-test-" + Date.now() + ".db");
+process.env.DB_PATH = dbPath;
+process.env.JWT_SECRET = "x";
+process.env.NODE_ENV = "test";
+const { runMigrations } = require("../dist/db/migrate.js");
+runMigrations();
+const D = require("better-sqlite3");
+const d = new D(dbPath);
+const cols = d.prepare("PRAGMA table_info(webhook_deliveries)").all().map((c) => c.name);
+console.log("columns:", cols);
+console.log("migrations:", d.prepare("SELECT filename FROM schema_migrations").all().map((m) => m.filename));
+fs.unlinkSync(dbPath);

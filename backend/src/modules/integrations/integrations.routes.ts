@@ -6,6 +6,7 @@ import { getDb } from "../../db/database";
 import { newId } from "../../shared/ids";
 import { ok, paginated } from "../../shared/response";
 import { parsePagination } from "../../shared/pagination";
+import { processIntegrationEvents, retryFailedEvents } from "../webhooks/webhook.service";
 import crypto from "node:crypto";
 
 export const integrationsRouter = Router();
@@ -111,4 +112,24 @@ integrationsRouter.post("/jobs/process", authenticate, resolveTenant, requireOrg
     }
   }
   ok(res, { processed });
+});
+
+// Process pending integration events (webhook deliveries with retry)
+integrationsRouter.post("/jobs/process-events", authenticate, resolveTenant, requireOrg, requirePermission("org.manage"), async (_req, res) => {
+  const result = await processIntegrationEvents();
+  ok(res, result);
+});
+
+// Retry failed integration events whose next_run has passed
+integrationsRouter.post("/jobs/retry-events", authenticate, resolveTenant, requireOrg, requirePermission("org.manage"), (_req, res) => {
+  const result = retryFailedEvents();
+  ok(res, result);
+});
+
+// Webhook deliveries log
+integrationsRouter.get("/webhook-deliveries", authenticate, resolveTenant, requireOrg, requirePermission("org.manage"), (req, res) => {
+  const r = req as any;
+  const db = getDb();
+  const rows = db.prepare("SELECT * FROM webhook_deliveries WHERE webhook_id IN (SELECT id FROM webhooks WHERE organization_id = ?) ORDER BY delivered_at DESC LIMIT 100").all(r.organizationId) as any[];
+  ok(res, rows);
 });

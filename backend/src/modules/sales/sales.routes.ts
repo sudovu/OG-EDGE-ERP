@@ -7,6 +7,7 @@ import { newId } from "../../shared/ids";
 import { ok, paginated } from "../../shared/response";
 import { parsePagination } from "../../shared/pagination";
 import { nextNumber } from "../../shared/numbering";
+import { queueEvent } from "../webhooks/webhook.service";
 
 export const salesRouter = Router();
 
@@ -90,6 +91,7 @@ salesRouter.post("/quotations", authenticate, resolveTenant, requireOrg, require
       });
     });
     tx();
+    queueEvent({ organizationId: r.organizationId, event: "quotation.created", payload: { id, number } });
     ok(res, { id, number }, 201);
   } catch (e) {
     next(e);
@@ -172,6 +174,7 @@ salesRouter.post("/sales-orders", authenticate, resolveTenant, requireOrg, requi
       }
     });
     tx();
+    queueEvent({ organizationId: r.organizationId, event: "sales_order.created", payload: { id, number } });
     ok(res, { id, number }, 201);
   } catch (e) {
     next(e);
@@ -258,6 +261,7 @@ salesRouter.post("/invoices", authenticate, resolveTenant, requireOrg, requirePe
       db.prepare("UPDATE invoices SET issued_at = datetime('now') WHERE id = ?").run(id);
     });
     tx();
+    queueEvent({ organizationId: r.organizationId, event: "invoice.created", payload: { id, number } });
     ok(res, { id, number }, 201);
   } catch (e) {
     next(e);
@@ -309,6 +313,7 @@ salesRouter.post("/payments", authenticate, resolveTenant, requireOrg, requirePe
       }
     });
     tx();
+    queueEvent({ organizationId: r.organizationId, event: "payment.created", payload: { id, invoice_id: input.invoice_id, amount: input.amount, currency: input.currency } });
     ok(res, { id }, 201);
   } catch (e) {
     next(e);
