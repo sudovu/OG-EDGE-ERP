@@ -4,6 +4,7 @@ import { authenticate } from "../../core/auth/middleware";
 import { registerUser, loginUser } from "./auth.service";
 import { ok, fail } from "../../shared/response";
 import { getDb } from "../../db/database";
+import { authLimiter } from "../../shared/rateLimiters";
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -19,7 +20,7 @@ const loginSchema = z.object({
 
 export const authRouter = Router();
 
-authRouter.post("/auth/register", async (req, res, next) => {
+authRouter.post("/auth/register", authLimiter, async (req, res, next) => {
   try {
     const input = registerSchema.parse(req.body);
     const result = await registerUser(input);
@@ -29,7 +30,7 @@ authRouter.post("/auth/register", async (req, res, next) => {
   }
 });
 
-authRouter.post("/auth/login", async (req, res, next) => {
+authRouter.post("/auth/login", authLimiter, async (req, res, next) => {
   try {
     const input = loginSchema.parse(req.body);
     const result = await loginUser(input.email, input.password);

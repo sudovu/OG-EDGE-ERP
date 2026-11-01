@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
-import rateLimit from "express-rate-limit";
+import { generalLimiter, authLimiter } from "./shared/rateLimiters";
 import swaggerUi from "swagger-ui-express";
 import { config } from "./config";
 import { errorHandler, notFoundHandler } from "./core/errorHandler";
@@ -12,9 +12,30 @@ import { startScheduler } from "./modules/scheduler/scheduler.service";
 
 export function createApp() {
   const app = express();
-  app.use(helmet());
-  app.use(cors({ origin: config.corsOrigin, credentials: true }));
-  app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 1000, standardHeaders: true, legacyHeaders: false }));
+
+  // Security headers (helmet)
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          scriptSrc: ["'self'"],
+          imgSrc: ["'self'", "data:"],
+          connectSrc: ["'self'"],
+          fontSrc: ["'self'"],
+          objectSrc: ["'none'"],
+          frameAncestors: ["'none'"],
+        },
+      },
+      crossOriginEmbedderPolicy: true,
+      referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+      hsts: config.nodeEnv === "production" ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
+    }),
+  );
+
+  app.use(cors({ origin: config.corsOrigin, credentials: true, methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] }));
+  app.use(generalLimiter);
   app.use(express.json({ limit: "10mb" }));
   app.use(express.urlencoded({ extended: true }));
   app.use(morgan("dev"));
@@ -46,4 +67,3 @@ export function mountRoutes(app: express.Express, router: express.Router) {
   app.use(notFoundHandler);
   app.use(errorHandler);
 }
-

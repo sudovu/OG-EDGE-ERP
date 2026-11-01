@@ -9,6 +9,18 @@ import { errorHandler, notFoundHandler } from "./core/errorHandler";
 import { startScheduler, stopScheduler } from "./modules/scheduler/scheduler.service";
 
 async function main() {
+  // Production environment validation
+  if (config.nodeEnv === "production") {
+    const required = ["JWT_SECRET", "DB_DRIVER", "DB_PATH", "DATABASE_URL"];
+    const missing = required.filter((k) => !config[k as keyof typeof config]);
+    if (missing.length > 0) {
+      throw new Error(`Missing required production env vars: ${missing.join(", ")}`);
+    }
+    if (config.dbDriver === "postgres" && !config.databaseUrl) {
+      throw new Error("DATABASE_URL is required when DB_DRIVER=postgres");
+    }
+  }
+
   // ensure db + migrations at startup
   await runMigrations();
   await seedPermissionsIfNeeded();

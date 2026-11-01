@@ -6,13 +6,30 @@ services:
       NODE_ENV: production
       PORT: 4000
       JWT_SECRET: ${JWT_SECRET}
-      DB_PATH: /data/og-edge.db
+      DB_DRIVER: postgres
+      DATABASE_URL: postgres://ogedge:${DB_PASSWORD}@postgres:5432/ogedge
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost}
-    volumes:
-      - og_edge_data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
       interval: 30s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ogedge
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ogedge
+    volumes:
+      - og_edge_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ogedge -d ogedge"]
+      interval: 10s
       timeout: 5s
       retries: 5
 
@@ -26,4 +43,4 @@ services:
         condition: service_healthy
 
 volumes:
-  og_edge_data:
+  og_edge_postgres_data:

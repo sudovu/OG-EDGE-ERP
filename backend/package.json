@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
     "migrate": "tsx src/db/migrate.ts",
-    "seed": "tsx src/db/seed.ts"
+    "seed": "tsx src/db/seed.ts",
+    "security:audit": "node ../../scripts/security-audit.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
